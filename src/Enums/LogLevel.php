@@ -4,9 +4,9 @@ namespace Timewave\LaravelLogger\Enums;
 
 enum LogLevel: int
 {
-    case DEBUG = 5;
-    case VERBOSE = 4;
-    case INFO = 3;
-    case WARNING = 2;
-    case ERROR = 1;
+    case DEBUG = 4;
+    case VERBOSE = 3;
+    case INFO = 2;
+    case WARNING = 1;
+    case ERROR = 0;
 }
