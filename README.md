@@ -4,16 +4,9 @@ Custom logger package for Laravel applications with opinionated log levels.
 
 ## Usage
 
-Use the `Timewave\LaravelLogger\Facades\Logger` facade to produce log entries. 
-
-All log levels accept the following signature:
-
-    error(string $message, ?array $context = null, ?\Throwable $exception = null)
-
-Output is always pushed to `stdout`. 
-
-
 Use the `Timewave\LaravelLogger\Classes\SpanLog` class to instantiate a spanned log. A "span" means the logs within the same instance can be tracked together.
+
+There will always be output to `stdout`. If Open Telemetry is configured, it will be pushed there to.
 
 Use like so:
 
