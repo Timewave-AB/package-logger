@@ -11,7 +11,7 @@ There will always be output to `stdout`. If Open Telemetry is configured, it wil
 Use like so:
 
 ```php
-$log = new SpanLog('request', ['request-id' => 'Legodalf']);
+$log = new SpanLog('request', ['requestId' => 'Legodalf']);
 $log->info('Something happened', ['local' => 'thing']);
 ```
 
