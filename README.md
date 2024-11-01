@@ -12,6 +12,30 @@ All log levels accept the following signature:
 
 Output is always pushed to `stdout`. 
 
+
+Use the `Timewave\LaravelLogger\Classes\SpanLog` class to instantiate a spanned log. A "span" means the logs within the same instance can be tracked together.
+
+Use like so:
+
+```php
+$log = new SpanLog('request', ['request-id' => 'Legodalf']);
+$log->info('Something happened', ['local' => 'thing']);
+```
+
+!!! BELOW USAGE IS BROKEN FOR NOW
+
+To create spans within spans, do this:
+
+```php
+$username = 'siv';
+
+$log = new SpanLog('request', ['requestId' => 'Legodalf']);
+$log->info('User is trying to login', ['username' => $username]);
+$userId = User::login($username);
+$subLog = new SpanLog('authedUser', ['userId' => $userId], $log);
+$subLog->info('user is doing something'); // This will keep the context of being a user logged in during the request with the specific id
+```
+
 ## Log levels
 
 - `error`: Apocalypse! :O
@@ -22,14 +46,21 @@ Output is always pushed to `stdout`.
 
 ## Log formats
 
-- `text`: Outputs a simple string
-- `json`: Outputs a string of a JSON object [default]
+- `json`: Outputs a string of a JSON object
+- `text`: Outputs a simple string [default]
+
+## Open Telemetry Collector endpoint
+
+A DSN string, example: 'http://localhost:4318'. The target must be a protobuf endpoint.
 
 ## Configuration
 
-- `LOG_LEVEL`: Sets the desired log level
-- `LOG_FORMAT`: Sets the desired output format
-- `LOG_FORMAT_TEXT_DELIMITER`: Sets the desired delimiter when `LOG_FORMAT` is set to `text` (available options: `space` or `tab` [default])
+In Laravel, set the following config keys in config/logging.php file:
+
+- `level`: Sets the desired log level.
+- `format`:Sets the desired output format.
+- `textDelimiter`: Sets the desired delimiter when `format` is set to `text` (available options: `space` or `tab` [default]).
+- `otlpCollectorEndpoint`: Sets the DSN for the protobuf OTLP collector.
 
 ## Local development
 

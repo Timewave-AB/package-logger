@@ -16,8 +16,13 @@
             "email": "utveckling@timewave.se"
         }
     ],
-    "require": {      
-      "php": "^8.0"
+    "require": {
+      "php": "^8.0",
+        "guzzlehttp/promises": "2.0.4",
+        "open-telemetry/exporter-otlp": "1.1.0",
+        "open-telemetry/opentelemetry": "1.0.0",
+        "open-telemetry/sdk": "1.1.2",
+        "php-http/httplug": "2.4.1"
     },
     "extra": {
       "laravel": {
@@ -25,5 +30,11 @@
           "Timewave\\LaravelLogger\\LaravelLoggerProvider"
         ]
       }
+    },
+    "config": {
+        "allow-plugins": {
+            "php-http/discovery": true,
+            "tbachert/spi": true
+        }
     }
 }
