@@ -1,6 +1,6 @@
 {
     "name": "timewave/laravel-logger",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "description": "Alternative logger for Laravel",
     "type": "library",
     "license": "MIT",
