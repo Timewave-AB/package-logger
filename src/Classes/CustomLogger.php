@@ -36,9 +36,9 @@ class CustomLogger
 
     private const OTEL_SCHEMA_URL = 'https://opentelemetry.io/schemas/1.9.0';
 
-    private ConsoleOutput $output;
+    private bool $otlpEnabled = false;
 
-    private LogLevel $logLevel;
+    private ConsoleOutput $output;
 
     private LogFormat $logFormat;
 
@@ -46,9 +46,9 @@ class CustomLogger
 
     private LoggerInterface $otlpLogger;
 
-    private TracerInterface $tracer;
+    private LogLevel $logLevel;
 
-    private bool $otlpEnabled = false;
+    private TracerInterface $tracer;
 
     public function __construct() {
         $this->output = new ConsoleOutput;
@@ -125,28 +125,6 @@ class CustomLogger
         }
     }
 
-    public function createSpan(
-        string $name,
-        array $context = [],
-        ?SpanKind $kind = null,
-        ?ContextInterface $parentSpanContext = null
-    ): SpanInterface {
-        if (!$this->otlpEnabled) {
-            return Span::getInvalid();
-        }
-
-        $spanBuilder = $this->tracer->spanBuilder($name)
-            ->setAttributes($context)
-            ->setSpanKind($kind ?? SpanKind::KIND_INTERNAL);
-
-        // If parent span is provided, set it explicitly
-        if ($parentSpanContext !== null) {
-            $spanBuilder->setParent($parentSpanContext);
-        }
-
-        return $spanBuilder->startSpan();
-    }
-
     public function debug(string $message, ?array $context = null, ?\Throwable $exception = null, ?SpanInterface $span = null): void
     {
         $this->log(LogLevel::DEBUG, $message, $context, $exception, $span);
@@ -170,6 +148,28 @@ class CustomLogger
     public function error(string $message, ?array $context = null, ?\Throwable $exception = null, ?SpanInterface $span = null): void
     {
         $this->log(LogLevel::ERROR, $message, $context, $exception, $span);
+    }
+
+    public function createSpan(
+        string $name,
+        array $context = [],
+        ?SpanKind $kind = null,
+        ?ContextInterface $parentSpanContext = null
+    ): SpanInterface {
+        if (!$this->otlpEnabled) {
+            return Span::getInvalid();
+        }
+
+        $spanBuilder = $this->tracer->spanBuilder($name)
+            ->setAttributes($context)
+            ->setSpanKind($kind ?? SpanKind::KIND_INTERNAL);
+
+        // If parent span is provided, set it explicitly
+        if ($parentSpanContext !== null) {
+            $spanBuilder->setParent($parentSpanContext);
+        }
+
+        return $spanBuilder->startSpan();
     }
 
     public function log(
