@@ -4,29 +4,37 @@ Custom logger package for Laravel applications with opinionated log levels.
 
 ## Usage
 
-Use the `Timewave\LaravelLogger\Classes\SpanLog` class to instantiate a spanned log. A "span" means the logs within the same instance can be tracked together.
-
 There will always be output to `stdout`. If Open Telemetry is configured, it will be pushed there to.
 
-Use like so:
+### Basic usage:
 
 ```php
-$log = new SpanLog('request', ['requestId' => 'Legodalf']);
-$log->info('Something happened', ['local' => 'thing']);
+$log = new CustomLogger('my-app-name');
+$log->otlpHttpHost = 'http://localhost:4318';
+$log->info('Something happened', ['key' => 'value']);
 ```
 
-!!! BELOW USAGE IS BROKEN FOR NOW
-
-To create spans within spans, do this:
+### Usage with spans
 
 ```php
-$username = 'siv';
+$log = new CustomLogger('auth-4');
+$log->otlpHttpHost = 'http://localhost:4318';
 
-$log = new SpanLog('request', ['requestId' => 'Legodalf']);
-$log->info('User is trying to login', ['username' => $username]);
-$userId = User::login($username);
-$subLog = new SpanLog('authedUser', ['userId' => $userId], $log);
-$subLog->info('user is doing something'); // This will keep the context of being a user logged in during the request with the specific id
+$requestSpan = $log->createSpanLogger('request', ['requestId' => 'Legodalf']);
+
+$requestSpan->verbose('Incoming request', ['method' => 'POST', 'path' => '/auth/password']);
+
+$loginSpan = $requestSpan->createSpanLogger('login', ['username' => 'siv']);
+
+$loginSpan->info('User is trying to login');
+$userId = User::login('siv');
+$loginSpan->verbose('User is logged in');
+
+$loginSpan->endSpan();
+
+$requestSpan->debug('Request is over');
+
+$requestSpan->endSpan();
 ```
 
 ## Log levels
