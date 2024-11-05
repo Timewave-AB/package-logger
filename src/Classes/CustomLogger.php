@@ -30,8 +30,6 @@ class CustomLogger
         };
 
         $this->logFormat = LogFormat::tryFrom($logFormat) ?? LogFormat::TEXT;
-
-        $this->otlpHttpHost = $otlpHttpHost;
     }
 
     public function debug(string $message, ?array $context = null, ?\Throwable $exception = null): void
@@ -59,7 +57,7 @@ class CustomLogger
         $this->log(LogLevel::ERROR, $message, $context, $exception);
     }
 
-    public function createSpanLogger(string $name, ?array $context = null, ?string $parentId = null): CustomLogger {
+    public function createSpanLogger(string $name, ?array $context = null): CustomLogger {
         $span = new Span(
             $name,
             $this->serviceName,
@@ -95,11 +93,11 @@ class CustomLogger
             return;
         }
 
-        $now = time();
+        $microNow = microtime(true);
 
         if ($this->otlpHttpHost) {
             $otlpSender = new OtlpSender($this->otlpHttpHost);
-            $payload = $this->toOtlpJSON($now, $level, $message, $context, $exception, $this->span);
+            $payload = $this->toOtlpJSON($microNow, $level, $message, $context, $exception, $this->span);
             $otlpSender->http('/v1/logs', $payload);
         }
 
@@ -112,7 +110,7 @@ class CustomLogger
         // Format console output
         $line = array_filter([
             'level' => $level->name,
-            'datetime' => date('Y-m-d H:i:s', $now),
+            'datetime' => date('Y-m-d H:i:s', ($microNow / 1000)),
             'message' => $message,
             'context' => $context,
             'exception' => $exception,
@@ -132,7 +130,7 @@ class CustomLogger
     }
 
     private function toOtlpJSON(
-        int $unixTime,
+        int $unixMicroTime,
         LogLevel $level,
         string $message,
         ?array $context = null,
@@ -179,7 +177,7 @@ class CustomLogger
                         'name' => 'timewave-logger'
                     ],
                     'logRecords' => [[
-                        'timeUnixNano' => (string) ((int)microtime(true) * 1000000000),
+                        'timeUnixNano' => (string) ($unixMicroTime * 1000000000),
                         'severityNumber' => $severityNumber,
                         'severityText' => $level->name,
                         'body' => [
