@@ -1,6 +1,6 @@
-# Timewave\LaravelLogger
+# Timewave\Logger
 
-Custom logger package for Laravel applications with opinionated log levels.
+Custom logger package for PHP applications with opinionated log levels.
 
 ## Usage
 

@@ -1,6 +1,6 @@
 <?php
 
-namespace Timewave\LaravelLogger\Classes;
+namespace Timewave\Logger\Classes;
 
 class OtlpSender
 {

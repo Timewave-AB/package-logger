@@ -1,9 +1,9 @@
 <?php
 
-namespace Timewave\LaravelLogger\Classes;
+namespace Timewave\Logger\Classes;
 
-use Timewave\LaravelLogger\Enums\LogFormat;
-use Timewave\LaravelLogger\Enums\LogLevel;
+use Timewave\Logger\Enums\LogFormat;
+use Timewave\Logger\Enums\LogLevel;
 
 class CustomLogger
 {
