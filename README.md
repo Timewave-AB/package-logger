@@ -59,7 +59,7 @@ A DSN string, example: 'http://localhost:4318'. The target must be a protobuf en
 In Laravel, set the following config keys in config/logging.php file:
 
 - `level`: Sets the desired log level.
-- `format`:Sets the desired output format.
+- `format`: Sets the desired output format.
 - `textDelimiter`: Sets the desired delimiter when `format` is set to `text` (available options: `space` or `tab` [default]).
 - `otlpCollectorEndpoint`: Sets the DSN for the protobuf OTLP collector.
 
