@@ -7,13 +7,21 @@ use Timewave\Logger\Enums\LogLevel;
 
 interface CustomLoggerInterface
 {
+    public string $logFormatTextDelimiter;
+
+    public string $otlpHttpHost;
+
+    public string $serviceName;
+
+    private ?Span $span;
+
     public function __construct(
-        public string $serviceName,
+        string $serviceName,
         string $logLevel,
         string $logFormat,
-        public string $logFormatTextDelimiter,
-        public ?string $otlpHttpHost,
-        private ?Span $span,
+        string $logFormatTextDelimiter,
+        ?string $otlpHttpHost,
+        ?Span $span,
     );
 
     public function debug(string $message, ?array $context = null, ?\Throwable $exception = null): void;
