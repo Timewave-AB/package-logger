@@ -29,7 +29,7 @@ class OtlpSender
         curl_close($ch);
 
         if ($error) {
-            fwrite(STDOUT, 'OTLP ERROR: cURL error sending to OTLP: ' . $error . "\n");
+            fwrite(fopen('php://stdout', 'w'), 'OTLP ERROR: cURL error sending to OTLP: ' . $error . "\n");
             return;
         }
 
@@ -38,6 +38,6 @@ class OtlpSender
             return;
         }
 
-        fwrite(STDOUT, 'OTLP ERROR: sending was unsuccessful. statusCode: ' . $statusCode . " response: '" . $response . "'\n");
+        fwrite(fopen('php://stdout', 'w'), 'OTLP ERROR: sending was unsuccessful. statusCode: ' . $statusCode . " response: '" . $response . "'\n");
     }
 }

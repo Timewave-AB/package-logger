@@ -122,7 +122,7 @@ class CustomLogger implements CustomLoggerInterface
             default => $this->toText($line),
         };
 
-        fwrite(STDOUT, "$outputStr\n");
+        fwrite(fopen('php://stdout', 'w'), "$outputStr\n");
     }
 
     private function toJson(array $line): string
