@@ -93,7 +93,7 @@ class CustomLogger
             return;
         }
 
-        $microNow = microtime(true);
+        $microNow = (int) (microtime(true) * 1000);
 
         if ($this->otlpHttpHost) {
             $otlpSender = new OtlpSender($this->otlpHttpHost);
@@ -110,7 +110,7 @@ class CustomLogger
         // Format console output
         $line = array_filter([
             'level' => $level->name,
-            'datetime' => date('Y-m-d H:i:s', ($microNow / 1000)),
+            'datetime' => date('Y-m-d H:i:s', (int)($microNow / 1000)),
             'message' => $message,
             'context' => $context,
             'exception' => $exception,
@@ -177,7 +177,7 @@ class CustomLogger
                         'name' => 'timewave-logger'
                     ],
                     'logRecords' => [[
-                        'timeUnixNano' => (string) ($unixMicroTime * 1000000000),
+                        'timeUnixNano' => (string) ($unixMicroTime * 1000000),
                         'severityNumber' => $severityNumber,
                         'severityText' => $level->name,
                         'body' => [
