@@ -2,10 +2,11 @@
 
 namespace Timewave\Logger\Classes;
 
+use Timewave\Logger\Contracts\CustomLoggerInterface;
 use Timewave\Logger\Enums\LogFormat;
 use Timewave\Logger\Enums\LogLevel;
 
-class CustomLogger
+class CustomLogger implements CustomLoggerInterface
 {
     // We have these private since we want to ensure their format via the constructor
     private LogFormat $logFormat;
