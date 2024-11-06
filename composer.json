@@ -1,13 +1,13 @@
 {
-    "name": "timewave/laravel-logger",
-    "version": "0.1.0",
-    "description": "Alternative logger for Laravel",
+    "name": "timewave/logger",
+    "version": "0.2.0",
+    "description": "Logging library",
     "type": "library",
     "license": "MIT",
     "minimum-stability": "stable",
     "autoload": {
         "psr-4": {
-            "Timewave\\LaravelLogger\\": "src/"
+            "Timewave\\Logger\\": "src/"
         }
     },
     "authors": [
@@ -16,14 +16,7 @@
             "email": "utveckling@timewave.se"
         }
     ],
-    "require": {      
+    "require": {
       "php": "^8.0"
-    },
-    "extra": {
-      "laravel": {
-        "providers": [
-          "Timewave\\LaravelLogger\\LaravelLoggerProvider"
-        ]
-      }
     }
 }

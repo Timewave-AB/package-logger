@@ -1,16 +1,41 @@
-# Timewave\LaravelLogger
+# Timewave\Logger
 
-Custom logger package for Laravel applications with opinionated log levels.
+Custom logger package for PHP applications with opinionated log levels.
 
 ## Usage
 
-Use the `Timewave\LaravelLogger\Facades\Logger` facade to produce log entries. 
+There will always be output to `stdout`. If Open Telemetry is configured, it will be pushed there to.
 
-All log levels accept the following signature:
+### Basic usage:
 
-    error(string $message, ?array $context = null, ?\Throwable $exception = null)
+```php
+$log = new CustomLogger('my-app-name');
+$log->otlpHttpHost = 'http://localhost:4318';
+$log->info('Something happened', ['key' => 'value']);
+```
 
-Output is always pushed to `stdout`. 
+### Usage with spans
+
+```php
+$log = new CustomLogger('auth-4');
+$log->otlpHttpHost = 'http://localhost:4318';
+
+$requestSpan = $log->createSpanLogger('request', ['requestId' => 'Legodalf']);
+
+$requestSpan->verbose('Incoming request', ['method' => 'POST', 'path' => '/auth/password']);
+
+$loginSpan = $requestSpan->createSpanLogger('login', ['username' => 'siv']);
+
+$loginSpan->info('User is trying to login');
+$userId = User::login('siv');
+$loginSpan->verbose('User is logged in');
+
+$loginSpan->endSpan();
+
+$requestSpan->debug('Request is over');
+
+$requestSpan->endSpan();
+```
 
 ## Log levels
 
@@ -22,23 +47,13 @@ Output is always pushed to `stdout`.
 
 ## Log formats
 
-- `text`: Outputs a simple string
-- `json`: Outputs a string of a JSON object [default]
+- `json`: Outputs a string of a JSON object
+- `text`: Outputs a simple string [default]
 
-## Configuration
+## Open Telemetry Collector endpoint
 
-- `LOG_LEVEL`: Sets the desired log level
-- `LOG_FORMAT`: Sets the desired output format
-- `LOG_FORMAT_TEXT_DELIMITER`: Sets the desired delimiter when `LOG_FORMAT` is set to `text` (available options: `space` or `tab` [default])
+A DSN string, example: 'http://localhost:4318'. The target must be a protobuf endpoint.
 
 ## Local development
 
-You'll need a Laravel installation that can house this package while developing it locally. Follow these simple steps to get up and running:
-
-1. Create a fresh Laravel installation to house this package
-2. Create a `packages` folder in the root of the Laravel installation
-3. Clone this repo into the packages folder
-4. Add `"Timewave\\LaravelLogger\\": "packages/package-laravel-logger/src/"` to the `psr-4` section inside your `composer.json` (for the Laravel installation)
-5. Execute `composer dump-autoload`
-
-You should now be ready to consume the package as if you had installed it from packagist. 
+Either register an auto loader, or explicitly require all PHP-files in this repo, and then just start using and developing.

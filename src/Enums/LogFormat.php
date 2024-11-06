@@ -1,6 +1,6 @@
 <?php
 
-namespace Timewave\LaravelLogger\Enums;
+namespace Timewave\Logger\Enums;
 
 enum LogFormat: string
 {
