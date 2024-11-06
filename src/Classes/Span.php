@@ -65,15 +65,19 @@ class Span
             $this->payload['resourceSpans'][0]['scopeSpans'][0]['spans'][0]['parentSpanId'] = $this->parentId;
         }
 
-        $otlpSender = new OtlpSender($this->otlpHttpHost);
-        $otlpSender->http('/v1/traces', $this->payload);
+        if ($this->otlpHttpHost !== null) {
+            $otlpSender = new OtlpSender($this->otlpHttpHost);
+            $otlpSender->http('/v1/traces', $this->payload);
+        }
     }
 
     public function end(): void
     {
         $this->payload['resourceSpans'][0]['scopeSpans'][0]['spans'][0]['endTimeUnixNano'] = (string) ((int)microtime(true) * 1000000000);
-        $otlpSender = new OtlpSender($this->otlpHttpHost);
-        $otlpSender->http('/v1/traces', $this->payload);
+        if ($this->otlpHttpHost !== null) {
+            $otlpSender = new OtlpSender($this->otlpHttpHost);
+            $otlpSender->http('/v1/traces', $this->payload);
+        }
     }
 
     private function createSpanId(): string {
