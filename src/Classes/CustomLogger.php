@@ -69,8 +69,8 @@ class CustomLogger implements CustomLoggerInterface
 
         return new CustomLogger(
             $this->serviceName,
-            $this->logLevel->value,
-            $this->logFormat->value,
+            $this->logLevel->name,
+            $this->logFormat->name,
             $this->logFormatTextDelimiter,
             $this->otlpHttpHost,
             $span
