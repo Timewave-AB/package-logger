@@ -1,0 +1,22 @@
+{
+    "name": "timewave/logger",
+    "version": "0.2.2",
+    "description": "Logging library",
+    "type": "library",
+    "license": "MIT",
+    "minimum-stability": "stable",
+    "autoload": {
+        "psr-4": {
+            "Timewave\\Logger\\": "src/"
+        }
+    },
+    "authors": [
+        {
+            "name": "Timewave",
+            "email": "utveckling@timewave.se"
+        }
+    ],
+    "require": {
+      "php": "^8.0"
+    }
+}
