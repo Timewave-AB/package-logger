@@ -10,6 +10,11 @@
             "Timewave\\Logger\\": "src/"
         }
     },
+    "autoload-dev": {
+        "psr-4": {
+            "Timewave\\Logger\\Tests\\": "tests/"
+        }
+    },
     "authors": [
         {
             "name": "Timewave",
@@ -18,5 +23,11 @@
     ],
     "require": {
       "php": "^8.0"
+    },
+    "require-dev": {
+      "phpunit/phpunit": "^9.6"
+    },
+    "scripts": {
+      "test": "phpunit"
     }
 }

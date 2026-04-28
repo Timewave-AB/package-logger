@@ -57,3 +57,12 @@ A DSN string, example: 'http://localhost:4318'. The target must be a protobuf en
 ## Local development
 
 Either register an auto loader, or explicitly require all PHP-files in this repo, and then just start using and developing.
+
+## Running tests
+
+```sh
+composer install
+composer test
+```
+
+Or invoke PHPUnit directly: `vendor/bin/phpunit`.
