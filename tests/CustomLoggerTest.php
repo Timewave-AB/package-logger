@@ -114,8 +114,11 @@ class CustomLoggerTest extends LoggerSubprocessTestCase
 
         $this->assertArrayHasKey('traceId', $context);
         $this->assertArrayHasKey('spanId', $context);
-        // Pin current widths: span id = bin2hex(random_bytes(8)) = 16 hex chars,
-        // trace id = bin2hex(random_bytes(16)) = 32 hex chars.
+        // Pin existing key→width mapping. log() assigns span->id (16 hex chars,
+        // from bin2hex(random_bytes(8))) into the 'traceId' key, and
+        // span->traceId (32 hex chars, from bin2hex(random_bytes(16))) into the
+        // 'spanId' key. This cross-assignment is the current behavior; pinning
+        // it here forces any future change to be deliberate.
         $this->assertMatchesRegularExpression('/^[0-9a-f]{16}$/', $context['traceId']);
         $this->assertMatchesRegularExpression('/^[0-9a-f]{32}$/', $context['spanId']);
         $this->assertNotSame($context['traceId'], $context['spanId']);
