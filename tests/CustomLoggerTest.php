@@ -124,11 +124,11 @@ class CustomLoggerTest extends LoggerSubprocessTestCase
         $this->assertNotSame($context['traceId'], $context['spanId']);
     }
 
-    public function testLogMethodAcceptsLogLevelEnumDirectly(): void
+    public function testLogMethodAcceptsLogLevelInstanceDirectly(): void
     {
         $output = $this->runLoggerScript("
             \$log = new Timewave\\Logger\\Classes\\CustomLogger('svc');
-            \$log->log(Timewave\\Logger\\Enums\\LogLevel::ERROR, 'boom');
+            \$log->log(Timewave\\Logger\\Enums\\LogLevel::error(), 'boom');
         ");
 
         $lines = $this->nonEmptyLines($output);

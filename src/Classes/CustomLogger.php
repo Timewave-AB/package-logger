@@ -8,57 +8,79 @@ use Timewave\Logger\Enums\LogLevel;
 
 class CustomLogger implements CustomLoggerInterface
 {
-    // We have these private since we want to ensure their format via the constructor
+    public string $serviceName;
+
+    public string $logFormatTextDelimiter;
+
+    public ?string $otlpHttpHost;
+
     private LogFormat $logFormat;
 
     private LogLevel $logLevel;
 
-    public function __construct(
-        public string $serviceName = 'my-app-logger',
-        string $logLevel = 'debug',
-        string $logFormat = LogFormat::TEXT->value,
-        public string $logFormatTextDelimiter = "\t",
-        public ?string $otlpHttpHost = null, // For example http://10.130.40.33:4318
-        private ?Span $span = null,
-    )
-    {
-        $this->logLevel = match (strtoupper($logLevel)) {
-            'ERROR' => LogLevel::ERROR,
-            'WARNING' => LogLevel::WARNING,
-            'INFO' => LogLevel::INFO,
-            'VERBOSE' => LogLevel::VERBOSE,
-            default => LogLevel::DEBUG,
-        };
+    private ?Span $span;
 
-        $this->logFormat = LogFormat::tryFrom($logFormat) ?? LogFormat::TEXT;
+    public function __construct(
+        string $serviceName = 'my-app-logger',
+        string $logLevel = 'debug',
+        string $logFormat = LogFormat::TEXT,
+        string $logFormatTextDelimiter = "\t",
+        ?string $otlpHttpHost = null,
+        ?Span $span = null
+    ) {
+        $this->serviceName = $serviceName;
+        $this->logFormatTextDelimiter = $logFormatTextDelimiter;
+        $this->otlpHttpHost = $otlpHttpHost;
+        $this->span = $span;
+
+        switch (strtoupper($logLevel)) {
+            case 'ERROR':
+                $this->logLevel = LogLevel::error();
+                break;
+            case 'WARNING':
+                $this->logLevel = LogLevel::warning();
+                break;
+            case 'INFO':
+                $this->logLevel = LogLevel::info();
+                break;
+            case 'VERBOSE':
+                $this->logLevel = LogLevel::verbose();
+                break;
+            default:
+                $this->logLevel = LogLevel::debug();
+                break;
+        }
+
+        $this->logFormat = LogFormat::tryFrom($logFormat) ?? LogFormat::text();
     }
 
     public function debug(string $message, ?array $context = null, ?\Throwable $exception = null): void
     {
-        $this->log(LogLevel::DEBUG, $message, $context, $exception);
+        $this->log(LogLevel::debug(), $message, $context, $exception);
     }
 
     public function verbose(string $message, ?array $context = null, ?\Throwable $exception = null): void
     {
-        $this->log(LogLevel::VERBOSE, $message, $context, $exception);
+        $this->log(LogLevel::verbose(), $message, $context, $exception);
     }
 
     public function info(string $message, ?array $context = null, ?\Throwable $exception = null): void
     {
-        $this->log(LogLevel::INFO, $message, $context, $exception);
+        $this->log(LogLevel::info(), $message, $context, $exception);
     }
 
     public function warning(string $message, ?array $context = null, ?\Throwable $exception = null): void
     {
-        $this->log(LogLevel::WARNING, $message, $context, $exception);
+        $this->log(LogLevel::warning(), $message, $context, $exception);
     }
 
     public function error(string $message, ?array $context = null, ?\Throwable $exception = null): void
     {
-        $this->log(LogLevel::ERROR, $message, $context, $exception);
+        $this->log(LogLevel::error(), $message, $context, $exception);
     }
 
-    public function createSpanLogger(string $name, ?array $context = null): CustomLogger {
+    public function createSpanLogger(string $name, ?array $context = null): CustomLogger
+    {
         $span = new Span(
             $name,
             $this->serviceName,
@@ -88,7 +110,7 @@ class CustomLogger implements CustomLoggerInterface
         LogLevel $level,
         string $message,
         ?array $context = null,
-        ?\Throwable $exception = null,
+        ?\Throwable $exception = null
     ): void {
         if ($level->value > $this->logLevel->value) {
             return;
@@ -117,10 +139,11 @@ class CustomLogger implements CustomLoggerInterface
             'exception' => $exception,
         ]);
 
-        $outputStr = match ($this->logFormat->value) {
-            LogFormat::JSON->value => $this->toJson($line),
-            default => $this->toText($line),
-        };
+        if ($this->logFormat->value === LogFormat::JSON) {
+            $outputStr = $this->toJson($line);
+        } else {
+            $outputStr = $this->toText($line);
+        }
 
         fwrite(fopen('php://stdout', 'w'), "$outputStr\n");
     }
@@ -136,16 +159,28 @@ class CustomLogger implements CustomLoggerInterface
         string $message,
         ?array $context = null,
         ?\Throwable $exception = null,
-        ?Span $span = null,
-    )
-    {
-        $severityNumber = match ($level->value) {
-            4 => 5,  // Debug => DEBUG
-            3 => 8,  // Verbose => DEBUG4
-            2 => 9,  // Info => INFO
-            1 => 13, // Warning => WARN
-            0 => 17, // Error => ERROR
-        };
+        ?Span $span = null
+    ) {
+        switch ($level->value) {
+            case LogLevel::DEBUG:
+                $severityNumber = 5;  // DEBUG
+                break;
+            case LogLevel::VERBOSE:
+                $severityNumber = 8;  // DEBUG4
+                break;
+            case LogLevel::INFO:
+                $severityNumber = 9;  // INFO
+                break;
+            case LogLevel::WARNING:
+                $severityNumber = 13; // WARN
+                break;
+            case LogLevel::ERROR:
+                $severityNumber = 17; // ERROR
+                break;
+            default:
+                $severityNumber = 0;
+                break;
+        }
 
         $attributes = [];
 
@@ -210,7 +245,7 @@ class CustomLogger implements CustomLoggerInterface
     private function toText(array $line): string
     {
         if (array_key_exists('context', $line)) {
-            $line['context'] = http_build_query(data: $line['context'], arg_separator: ' ');
+            $line['context'] = http_build_query($line['context'], '', ' ');
         }
 
         if (array_key_exists('exception', $line)) {

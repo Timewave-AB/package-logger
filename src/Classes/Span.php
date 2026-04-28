@@ -4,20 +4,35 @@ namespace Timewave\Logger\Classes;
 
 class Span
 {
-    public readonly string $id;
+    public string $id;
 
     public array $payload;
 
-    public readonly string $traceId;
+    public string $traceId;
+
+    public string $name;
+
+    public string $serviceName;
+
+    public ?array $context;
+
+    public ?string $parentId;
+
+    public ?string $otlpHttpHost;
 
     public function __construct(
-        public string $name,
-        public string $serviceName = 'my-app-logger',
-        public ?array $context = null,
-        public ?string $parentId = null,
-        public ?string $otlpHttpHost = null, // For example http://10.130.40.33:4318
-    )
-    {
+        string $name,
+        string $serviceName = 'my-app-logger',
+        ?array $context = null,
+        ?string $parentId = null,
+        ?string $otlpHttpHost = null
+    ) {
+        $this->name = $name;
+        $this->serviceName = $serviceName;
+        $this->context = $context;
+        $this->parentId = $parentId;
+        $this->otlpHttpHost = $otlpHttpHost;
+
         $this->id = $this->createSpanId();
         $this->traceId = $this->createTraceId();
 
@@ -80,11 +95,13 @@ class Span
         }
     }
 
-    private function createSpanId(): string {
+    private function createSpanId(): string
+    {
         return bin2hex(random_bytes(8));
     }
 
-    private function createTraceId(): string {
+    private function createTraceId(): string
+    {
         return bin2hex(random_bytes(16));
     }
 }

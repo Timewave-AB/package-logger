@@ -4,10 +4,11 @@ namespace Timewave\Logger\Classes;
 
 class OtlpSender
 {
-    public function __construct(
-        public string $otlpHttpHost, // For example http://10.130.40.33:4318
-    )
+    public string $otlpHttpHost;
+
+    public function __construct(string $otlpHttpHost)
     {
+        $this->otlpHttpHost = $otlpHttpHost;
     }
 
     public function http(string $path, array $payload): void
