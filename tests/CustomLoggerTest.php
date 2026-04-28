@@ -94,8 +94,10 @@ class CustomLoggerTest extends LoggerSubprocessTestCase
 
     public function testCreateSpanLoggerInheritsConfigAndAttachesSpan(): void
     {
-        // The span logger must keep the same service name + format, and inject
-        // traceId/spanId into the context column of subsequent text logs.
+        // The ['k' => 'v'] context passed to createSpanLogger is attached to
+        // the Span itself (and emitted to OTLP). It is NOT forwarded to log
+        // lines from the child logger — log() only injects traceId/spanId
+        // into the context column when a span is present.
         $output = $this->runLoggerScript("
             \$log = new Timewave\\Logger\\Classes\\CustomLogger('svc');
             \$child = \$log->createSpanLogger('op', ['k' => 'v']);
@@ -106,9 +108,17 @@ class CustomLoggerTest extends LoggerSubprocessTestCase
         $parts = explode("\t", $line);
         $this->assertSame('INFO', $parts[0]);
         $this->assertSame('inside span', $parts[2]);
-        // Context contains the original key plus traceId and spanId added by log().
-        $this->assertStringContainsString('traceId=', $parts[3]);
-        $this->assertStringContainsString('spanId=', $parts[3]);
+
+        // Context column is built via http_build_query with ' ' as separator.
+        parse_str(strtr($parts[3], ' ', '&'), $context);
+
+        $this->assertArrayHasKey('traceId', $context);
+        $this->assertArrayHasKey('spanId', $context);
+        // Pin current widths: span id = bin2hex(random_bytes(8)) = 16 hex chars,
+        // trace id = bin2hex(random_bytes(16)) = 32 hex chars.
+        $this->assertMatchesRegularExpression('/^[0-9a-f]{16}$/', $context['traceId']);
+        $this->assertMatchesRegularExpression('/^[0-9a-f]{32}$/', $context['spanId']);
+        $this->assertNotSame($context['traceId'], $context['spanId']);
     }
 
     public function testLogMethodAcceptsLogLevelEnumDirectly(): void
