@@ -58,7 +58,11 @@ class LogLevelTest extends TestCase
         // Native enum cases are readonly; the polyfill must prevent writes too,
         // otherwise mutating one call site would corrupt the cached singleton
         // for every other caller.
-        $level = LogLevel::error();
+        //
+        // Use a reflection-created instance instead of the cached singleton so
+        // a future regression that relaxes immutability can't poison the
+        // shared instance and break unrelated tests.
+        $level = (new \ReflectionClass(LogLevel::class))->newInstanceWithoutConstructor();
 
         $this->expectException(\LogicException::class);
         $level->name = 'mutated';

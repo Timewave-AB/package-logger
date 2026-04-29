@@ -47,7 +47,11 @@ class LogFormatTest extends TestCase
     {
         // Singletons must not be mutable, otherwise a write through one
         // reference would corrupt every cached caller.
-        $format = LogFormat::text();
+        //
+        // Use a reflection-created instance instead of the cached singleton so
+        // a future regression that relaxes immutability can't poison the
+        // shared instance and break unrelated tests.
+        $format = (new \ReflectionClass(LogFormat::class))->newInstanceWithoutConstructor();
 
         $this->expectException(\LogicException::class);
         $format->value = 'mutated';

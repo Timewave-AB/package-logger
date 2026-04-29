@@ -92,7 +92,7 @@ class CustomLogger implements CustomLoggerInterface
         return new CustomLogger(
             $this->serviceName,
             $this->logLevel->name,
-            $this->logFormat->name,
+            $this->logFormat->value,
             $this->logFormatTextDelimiter,
             $this->otlpHttpHost,
             $span
@@ -126,6 +126,9 @@ class CustomLogger implements CustomLoggerInterface
 
         // Add trace context to console output if span is provided
         if ($this->span !== null) {
+            // $context is nullable; normalize before writing to avoid
+            // auto-vivifying null into an array (deprecated on 8.1+).
+            $context = $context ?? [];
             $context['traceId'] = $this->span->id;
             $context['spanId'] = $this->span->traceId;
         }

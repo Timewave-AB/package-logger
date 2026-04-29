@@ -124,6 +124,26 @@ class CustomLoggerTest extends LoggerSubprocessTestCase
         $this->assertNotSame($context['traceId'], $context['spanId']);
     }
 
+    public function testCreateSpanLoggerInheritsJsonFormat(): void
+    {
+        // Regression: createSpanLogger previously passed $this->logFormat->name
+        // ('JSON') to the new CustomLogger, but the constructor's
+        // LogFormat::tryFrom is case-sensitive on lowercase backing values, so
+        // the child silently fell back to TEXT. Now it passes ->value ('json')
+        // and the format is preserved.
+        $output = $this->runLoggerScript("
+            \$log = new Timewave\\Logger\\Classes\\CustomLogger('svc', 'debug', 'json');
+            \$child = \$log->createSpanLogger('op');
+            \$child->info('inside span');
+        ");
+
+        $line = trim($output);
+        $decoded = json_decode($line, true);
+        $this->assertIsArray($decoded, "child did not emit JSON; got: {$line}");
+        $this->assertSame('INFO', $decoded['level']);
+        $this->assertSame('inside span', $decoded['message']);
+    }
+
     public function testLogMethodAcceptsLogLevelInstanceDirectly(): void
     {
         $output = $this->runLoggerScript("
