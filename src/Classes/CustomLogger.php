@@ -129,8 +129,12 @@ class CustomLogger implements CustomLoggerInterface
             // $context is nullable; normalize before writing to avoid
             // auto-vivifying null into an array (deprecated on 8.1+).
             $context = $context ?? [];
-            $context['traceId'] = $this->span->id;
-            $context['spanId'] = $this->span->traceId;
+            // Mirror the OTLP payload mapping in toOtlpJSON: traceId carries
+            // the trace id, spanId carries the span id. A previous
+            // implementation inverted these, breaking correlation between
+            // text logs and OTLP traces for the same event.
+            $context['traceId'] = $this->span->traceId;
+            $context['spanId'] = $this->span->id;
         }
 
         // Format console output

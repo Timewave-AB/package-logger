@@ -114,13 +114,13 @@ class CustomLoggerTest extends LoggerSubprocessTestCase
 
         $this->assertArrayHasKey('traceId', $context);
         $this->assertArrayHasKey('spanId', $context);
-        // Pin existing key→width mapping. log() assigns span->id (16 hex chars,
-        // from bin2hex(random_bytes(8))) into the 'traceId' key, and
-        // span->traceId (32 hex chars, from bin2hex(random_bytes(16))) into the
-        // 'spanId' key. This cross-assignment is the current behavior; pinning
-        // it here forces any future change to be deliberate.
-        $this->assertMatchesRegularExpression('/^[0-9a-f]{16}$/', $context['traceId']);
-        $this->assertMatchesRegularExpression('/^[0-9a-f]{32}$/', $context['spanId']);
+        // Pin the corrected key→width mapping. The 'traceId' key carries the
+        // 32-hex trace id (bin2hex(random_bytes(16))) and the 'spanId' key
+        // carries the 16-hex span id (bin2hex(random_bytes(8))), matching the
+        // OTLP payload assembled in toOtlpJSON so text logs and OTLP traces
+        // can be correlated by id.
+        $this->assertMatchesRegularExpression('/^[0-9a-f]{32}$/', $context['traceId']);
+        $this->assertMatchesRegularExpression('/^[0-9a-f]{16}$/', $context['spanId']);
         $this->assertNotSame($context['traceId'], $context['spanId']);
     }
 
