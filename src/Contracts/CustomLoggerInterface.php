@@ -13,7 +13,7 @@ interface CustomLoggerInterface
         string $logFormat,
         string $logFormatTextDelimiter,
         ?string $otlpHttpHost,
-        ?Span $span,
+        ?Span $span
     );
 
     public function debug(string $message, ?array $context = null, ?\Throwable $exception = null): void;
@@ -30,6 +30,6 @@ interface CustomLoggerInterface
         LogLevel $level,
         string $message,
         ?array $context,
-        ?\Throwable $exception,
+        ?\Throwable $exception
     ): void;
 }

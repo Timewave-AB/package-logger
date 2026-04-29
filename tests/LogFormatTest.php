@@ -31,4 +31,29 @@ class LogFormatTest extends TestCase
         $this->assertNull(LogFormat::tryFrom(''));
         $this->assertNull(LogFormat::tryFrom('TEXT'));
     }
+
+    public function testFactoriesAndTryFromReturnSingletons(): void
+    {
+        // Native enums guarantee identity; the polyfill must too. tryFrom
+        // routes through the factories so it inherits singleton behavior.
+        $this->assertSame(LogFormat::text(), LogFormat::text());
+        $this->assertSame(LogFormat::json(), LogFormat::json());
+        $this->assertSame(LogFormat::text(), LogFormat::tryFrom('text'));
+        $this->assertSame(LogFormat::json(), LogFormat::tryFrom('json'));
+        $this->assertNotSame(LogFormat::text(), LogFormat::json());
+    }
+
+    public function testInstancesRejectMutation(): void
+    {
+        // Singletons must not be mutable, otherwise a write through one
+        // reference would corrupt every cached caller.
+        //
+        // Use a reflection-created instance instead of the cached singleton so
+        // a future regression that relaxes immutability can't poison the
+        // shared instance and break unrelated tests.
+        $format = (new \ReflectionClass(LogFormat::class))->newInstanceWithoutConstructor();
+
+        $this->expectException(\LogicException::class);
+        $format->value = 'mutated';
+    }
 }

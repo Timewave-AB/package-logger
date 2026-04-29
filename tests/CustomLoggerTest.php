@@ -114,27 +114,74 @@ class CustomLoggerTest extends LoggerSubprocessTestCase
 
         $this->assertArrayHasKey('traceId', $context);
         $this->assertArrayHasKey('spanId', $context);
-        // Pin existing key→width mapping. log() assigns span->id (16 hex chars,
-        // from bin2hex(random_bytes(8))) into the 'traceId' key, and
-        // span->traceId (32 hex chars, from bin2hex(random_bytes(16))) into the
-        // 'spanId' key. This cross-assignment is the current behavior; pinning
-        // it here forces any future change to be deliberate.
-        $this->assertMatchesRegularExpression('/^[0-9a-f]{16}$/', $context['traceId']);
-        $this->assertMatchesRegularExpression('/^[0-9a-f]{32}$/', $context['spanId']);
+        // Pin the corrected key→width mapping. The 'traceId' key carries the
+        // 32-hex trace id (bin2hex(random_bytes(16))) and the 'spanId' key
+        // carries the 16-hex span id (bin2hex(random_bytes(8))), matching the
+        // OTLP payload assembled in toOtlpJSON so text logs and OTLP traces
+        // can be correlated by id.
+        $this->assertMatchesRegularExpression('/^[0-9a-f]{32}$/', $context['traceId']);
+        $this->assertMatchesRegularExpression('/^[0-9a-f]{16}$/', $context['spanId']);
         $this->assertNotSame($context['traceId'], $context['spanId']);
     }
 
-    public function testLogMethodAcceptsLogLevelEnumDirectly(): void
+    public function testCreateSpanLoggerInheritsJsonFormat(): void
+    {
+        // Regression: createSpanLogger previously passed $this->logFormat->name
+        // ('JSON') to the new CustomLogger, but the constructor's
+        // LogFormat::tryFrom is case-sensitive on lowercase backing values, so
+        // the child silently fell back to TEXT. Now it passes ->value ('json')
+        // and the format is preserved.
+        $output = $this->runLoggerScript("
+            \$log = new Timewave\\Logger\\Classes\\CustomLogger('svc', 'debug', 'json');
+            \$child = \$log->createSpanLogger('op');
+            \$child->info('inside span');
+        ");
+
+        $line = trim($output);
+        $decoded = json_decode($line, true);
+        $this->assertIsArray($decoded, "child did not emit JSON; got: {$line}");
+        $this->assertSame('INFO', $decoded['level']);
+        $this->assertSame('inside span', $decoded['message']);
+    }
+
+    public function testLogMethodAcceptsLogLevelInstanceDirectly(): void
     {
         $output = $this->runLoggerScript("
             \$log = new Timewave\\Logger\\Classes\\CustomLogger('svc');
-            \$log->log(Timewave\\Logger\\Enums\\LogLevel::ERROR, 'boom');
+            \$log->log(Timewave\\Logger\\Enums\\LogLevel::error(), 'boom');
         ");
 
         $lines = $this->nonEmptyLines($output);
         $this->assertCount(1, $lines);
         $this->assertStringStartsWith('ERROR', $lines[0]);
         $this->assertStringContainsString('boom', $lines[0]);
+    }
+
+    public function testOtlpSeverityMappingThrowsOnUnknownLevel(): void
+    {
+        // Defensive: LogLevel exposes only 5 cases, so toOtlpJSON's switch
+        // default is unreachable through the normal API. The throw exists so
+        // that if a future case is added without updating the mapping, callers
+        // fail loudly instead of silently shipping severityNumber=0
+        // ("UNSPECIFIED" in OTLP) to the collector. Reaching it from a test
+        // requires forging an invalid LogLevel via reflection.
+        $logger = new CustomLogger('svc');
+
+        $rc = new \ReflectionClass(LogLevel::class);
+        $bogus = $rc->newInstanceWithoutConstructor();
+        foreach (['name' => 'BOGUS', 'value' => 999] as $prop => $val) {
+            $rp = $rc->getProperty($prop);
+            $rp->setAccessible(true);
+            $rp->setValue($bogus, $val);
+        }
+
+        $toOtlp = (new \ReflectionClass(CustomLogger::class))->getMethod('toOtlpJSON');
+        $toOtlp->setAccessible(true);
+
+        $this->expectException(\LogicException::class);
+        $this->expectExceptionMessageMatches('/BOGUS.*999/');
+
+        $toOtlp->invoke($logger, 0, $bogus, 'msg');
     }
 
     /** @return string[] */

@@ -59,6 +59,34 @@ class SpanTest extends TestCase
         $this->assertArrayNotHasKey('parentSpanId', $record);
     }
 
+    public function testTimestampsCarrySubSecondPrecision(): void
+    {
+        // Pre-fix bug: `(int)microtime(true) * 1e9` truncated to whole seconds
+        // before multiplying, so every timestamp ended in nine zeros and span
+        // durations were quantized to ±1 second. The fixed form multiplies
+        // first, then casts, preserving sub-second precision.
+        $span = new Span('op');
+        $record = $span->payload['resourceSpans'][0]['scopeSpans'][0]['spans'][0];
+
+        $this->assertStringEndsNotWith('000000000', $record['startTimeUnixNano']);
+        $this->assertStringEndsNotWith('000000000', $record['endTimeUnixNano']);
+    }
+
+    public function testEndUpdatesEndTimestampWithSubSecondPrecision(): void
+    {
+        $span = new Span('op');
+        $startEnd = $span->payload['resourceSpans'][0]['scopeSpans'][0]['spans'][0]['endTimeUnixNano'];
+
+        // Tiny sleep to guarantee microtime advances on every reasonable system.
+        usleep(1000);
+        $span->end();
+
+        $afterEnd = $span->payload['resourceSpans'][0]['scopeSpans'][0]['spans'][0]['endTimeUnixNano'];
+
+        $this->assertStringEndsNotWith('000000000', $afterEnd);
+        $this->assertGreaterThan((int) $startEnd, (int) $afterEnd);
+    }
+
     public function testContextIsSerializedAsAttributes(): void
     {
         $span = new Span('op', 'svc', ['userId' => 42, 'tenant' => 'acme']);
