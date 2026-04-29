@@ -50,8 +50,8 @@ class Span
                         'spanId' => $this->id,
                         'name' => $this->name,
                         'kind' => 0, // Unspecified
-                        'startTimeUnixNano' => (string) ((int)microtime(true) * 1000000000),
-                        'endTimeUnixNano' => (string) ((int)microtime(true) * 1000000000), // Should be updated when the span ends!
+                        'startTimeUnixNano' => (string) (int) (microtime(true) * 1000000000),
+                        'endTimeUnixNano' => (string) (int) (microtime(true) * 1000000000), // Should be updated when the span ends!
                     ]]
                 ]]
             ]]
@@ -88,7 +88,7 @@ class Span
 
     public function end(): void
     {
-        $this->payload['resourceSpans'][0]['scopeSpans'][0]['spans'][0]['endTimeUnixNano'] = (string) ((int)microtime(true) * 1000000000);
+        $this->payload['resourceSpans'][0]['scopeSpans'][0]['spans'][0]['endTimeUnixNano'] = (string) (int) (microtime(true) * 1000000000);
         if ($this->otlpHttpHost !== null) {
             $otlpSender = new OtlpSender($this->otlpHttpHost);
             $otlpSender->http('/v1/traces', $this->payload);

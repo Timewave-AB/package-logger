@@ -137,6 +137,33 @@ class CustomLoggerTest extends LoggerSubprocessTestCase
         $this->assertStringContainsString('boom', $lines[0]);
     }
 
+    public function testOtlpSeverityMappingThrowsOnUnknownLevel(): void
+    {
+        // Defensive: LogLevel exposes only 5 cases, so toOtlpJSON's switch
+        // default is unreachable through the normal API. The throw exists so
+        // that if a future case is added without updating the mapping, callers
+        // fail loudly instead of silently shipping severityNumber=0
+        // ("UNSPECIFIED" in OTLP) to the collector. Reaching it from a test
+        // requires forging an invalid LogLevel via reflection.
+        $logger = new CustomLogger('svc');
+
+        $rc = new \ReflectionClass(LogLevel::class);
+        $bogus = $rc->newInstanceWithoutConstructor();
+        foreach (['name' => 'BOGUS', 'value' => 999] as $prop => $val) {
+            $rp = $rc->getProperty($prop);
+            $rp->setAccessible(true);
+            $rp->setValue($bogus, $val);
+        }
+
+        $toOtlp = (new \ReflectionClass(CustomLogger::class))->getMethod('toOtlpJSON');
+        $toOtlp->setAccessible(true);
+
+        $this->expectException(\LogicException::class);
+        $this->expectExceptionMessageMatches('/BOGUS.*999/');
+
+        $toOtlp->invoke($logger, 0, $bogus, 'msg');
+    }
+
     /** @return string[] */
     private function nonEmptyLines(string $output): array
     {

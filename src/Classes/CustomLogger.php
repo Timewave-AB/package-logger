@@ -178,8 +178,14 @@ class CustomLogger implements CustomLoggerInterface
                 $severityNumber = 17; // ERROR
                 break;
             default:
-                $severityNumber = 0;
-                break;
+                // Match the original `match` expression, which threw on
+                // unhandled values. Falling through to severityNumber=0
+                // ("UNSPECIFIED" in OTLP) would silently corrupt log data.
+                throw new \LogicException(sprintf(
+                    'Unmapped LogLevel for OTLP severity: %s (value=%d)',
+                    $level->name,
+                    $level->value
+                ));
         }
 
         $attributes = [];

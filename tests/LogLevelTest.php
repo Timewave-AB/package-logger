@@ -37,4 +37,55 @@ class LogLevelTest extends TestCase
         $this->assertSame(LogLevel::WARNING, LogLevel::warning()->value);
         $this->assertSame(LogLevel::ERROR, LogLevel::error()->value);
     }
+
+    public function testFactoryMethodsReturnSingletons(): void
+    {
+        // Native enums guarantee `LogLevel::ERROR === LogLevel::ERROR`. The PHP
+        // 7.4 polyfill caches instances so callers using identity comparisons
+        // (idiomatic with native enums) keep working.
+        $this->assertSame(LogLevel::debug(), LogLevel::debug());
+        $this->assertSame(LogLevel::verbose(), LogLevel::verbose());
+        $this->assertSame(LogLevel::info(), LogLevel::info());
+        $this->assertSame(LogLevel::warning(), LogLevel::warning());
+        $this->assertSame(LogLevel::error(), LogLevel::error());
+
+        // Different cases must remain distinct instances.
+        $this->assertNotSame(LogLevel::debug(), LogLevel::error());
+    }
+
+    public function testInstancesRejectMutation(): void
+    {
+        // Native enum cases are readonly; the polyfill must prevent writes too,
+        // otherwise mutating one call site would corrupt the cached singleton
+        // for every other caller.
+        $level = LogLevel::error();
+
+        $this->expectException(\LogicException::class);
+        $level->name = 'mutated';
+    }
+
+    public function testIssetReturnsTrueForNameAndValue(): void
+    {
+        $level = LogLevel::error();
+        $this->assertTrue(isset($level->name));
+        $this->assertTrue(isset($level->value));
+        $this->assertFalse(isset($level->nope));
+    }
+
+    public function testTryFromKnownValuesReturnsSingletonInstance(): void
+    {
+        // Mirrors LogFormat::tryFrom + native backed-enum behavior. Routes
+        // through the named factories so identity is preserved.
+        $this->assertSame(LogLevel::debug(), LogLevel::tryFrom(LogLevel::DEBUG));
+        $this->assertSame(LogLevel::verbose(), LogLevel::tryFrom(LogLevel::VERBOSE));
+        $this->assertSame(LogLevel::info(), LogLevel::tryFrom(LogLevel::INFO));
+        $this->assertSame(LogLevel::warning(), LogLevel::tryFrom(LogLevel::WARNING));
+        $this->assertSame(LogLevel::error(), LogLevel::tryFrom(LogLevel::ERROR));
+    }
+
+    public function testTryFromUnknownValueReturnsNull(): void
+    {
+        $this->assertNull(LogLevel::tryFrom(999));
+        $this->assertNull(LogLevel::tryFrom(-1));
+    }
 }
