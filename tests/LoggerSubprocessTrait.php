@@ -4,7 +4,7 @@ namespace Timewave\Logger\Tests;
 
 /**
  * Run a snippet of PHP code in a fresh subprocess with the package autoloader
- * already required, and return everything written to stdout.
+ * already required, and return everything written to stdout + stderr.
  *
  * Output via fwrite(fopen('php://stdout', 'w'), ...) goes directly to fd 1 and
  * is not captured by ob_start, so a subprocess is the only reliable way to
@@ -24,9 +24,30 @@ trait LoggerSubprocessTrait
         file_put_contents($tmp, $script);
 
         try {
-            $cmd = escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg($tmp);
-            $output = shell_exec($cmd . ' 2>&1');
-            return $output ?? '';
+            $proc = proc_open(
+                [PHP_BINARY, $tmp],
+                [
+                    0 => ['file', '/dev/null', 'r'],
+                    1 => ['pipe', 'w'],
+                    2 => ['pipe', 'w'],
+                ],
+                $pipes
+            );
+            if (!is_resource($proc)) {
+                $this->fail('failed to spawn subprocess');
+            }
+
+            $stdout = stream_get_contents($pipes[1]);
+            $stderr = stream_get_contents($pipes[2]);
+            fclose($pipes[1]);
+            fclose($pipes[2]);
+            $exitCode = proc_close($proc);
+
+            $output = (string) $stdout . (string) $stderr;
+            if ($exitCode !== 0) {
+                $this->fail("subprocess exited {$exitCode}; output:\n{$output}");
+            }
+            return $output;
         } finally {
             @unlink($tmp);
         }

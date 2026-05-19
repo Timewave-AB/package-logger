@@ -7,6 +7,8 @@ use Timewave\Logger\Classes\Span;
 
 class SpanTest extends TestCase
 {
+    use LoggerSubprocessTrait;
+
     public function testSpanIdIs16HexCharsAndTraceIdIs32HexChars(): void
     {
         $span = new Span('op');
@@ -85,6 +87,51 @@ class SpanTest extends TestCase
 
         $this->assertStringEndsNotWith('000000000', $afterEnd);
         $this->assertGreaterThan((int) $startEnd, (int) $afterEnd);
+    }
+
+    public function testEndIsIdempotentAtTheFieldLevel(): void
+    {
+        $span = new Span('op');
+        $span->end();
+        $firstEnd = $span->payload['resourceSpans'][0]['scopeSpans'][0]['spans'][0]['endTimeUnixNano'];
+
+        usleep(1000);
+        $span->end();
+        $secondEnd = $span->payload['resourceSpans'][0]['scopeSpans'][0]['spans'][0]['endTimeUnixNano'];
+
+        $this->assertSame(
+            $firstEnd,
+            $secondEnd,
+            'second end() must be a no-op so callers can defensively end() in finally blocks'
+        );
+    }
+
+    public function testDestructorWarnsOnStderrWhenSpanWasNeverEnded(): void
+    {
+        // Span wired to OTLP but never end()-ed: the previous implementation
+        // POSTed a zero-duration span from the constructor; now it doesn't,
+        // so a forgotten end() must at least be observable to operators via
+        // a stderr warning.
+        $output = $this->runLoggerScript("
+            \$span = new \\Timewave\\Logger\\Classes\\Span('forgotten', 'svc', null, null, 'http://127.0.0.1:1');
+            // intentionally not calling \$span->end()
+        ");
+
+        $this->assertStringContainsString(
+            "Span 'forgotten' destroyed without end()",
+            $output,
+            "expected stderr warning for un-ended span; got:\n{$output}"
+        );
+    }
+
+    public function testDestructorIsSilentForSpansWithoutOtlpWiring(): void
+    {
+        $output = $this->runLoggerScript("
+            \$span = new \\Timewave\\Logger\\Classes\\Span('noop');
+            // no otlpHttpHost, no sender — destructor must NOT warn
+        ");
+
+        $this->assertStringNotContainsString('destroyed without end()', $output);
     }
 
     public function testContextIsSerializedAsAttributes(): void

@@ -18,10 +18,16 @@ class CustomLogger implements CustomLoggerInterface
      * When true, OTLP HTTP calls are queued in memory and flushed at process
      * shutdown (or via explicit OtlpSender::flush()). This keeps the OTLP
      * collector off the request's critical path. Default: false (synchronous).
+     *
+     * See README "Deferred (fire-and-forget) OTLP" for caveats about
+     * long-running PHP-FPM workers.
      */
     public bool $otlpDeferred = false;
 
-    /** Shared sender — reused so its underlying cURL handle stays alive across calls. */
+    /**
+     * Explicit sender override. When null (default), getOtlpSender() returns
+     * the process-wide singleton from OtlpSender::shared(host, deferred).
+     */
     public ?OtlpSender $otlpSender = null;
 
     private LogFormat $logFormat;
@@ -29,6 +35,9 @@ class CustomLogger implements CustomLoggerInterface
     private LogLevel $logLevel;
 
     private ?Span $span;
+
+    /** @var resource|null cached php://stdout handle to avoid per-call fopen churn */
+    private $stdoutHandle = null;
 
     public function __construct(
         string $serviceName = 'my-app-logger',
@@ -91,6 +100,8 @@ class CustomLogger implements CustomLoggerInterface
 
     public function createSpanLogger(string $name, ?array $context = null): CustomLogger
     {
+        // Pass the sender explicitly so the child Span doesn't have to look it
+        // up itself (and so injected senders, used in tests, propagate down).
         $sender = $this->getOtlpSender();
 
         $span = new Span(
@@ -111,7 +122,7 @@ class CustomLogger implements CustomLoggerInterface
             $span
         );
         $child->otlpDeferred = $this->otlpDeferred;
-        $child->otlpSender = $sender;
+        $child->otlpSender = $this->otlpSender; // propagate any explicit override
 
         return $child;
     }
@@ -169,24 +180,31 @@ class CustomLogger implements CustomLoggerInterface
             $outputStr = $this->toText($line);
         }
 
-        fwrite(fopen('php://stdout', 'w'), "$outputStr\n");
+        $this->writeStdout($outputStr);
     }
 
     private function getOtlpSender(): ?OtlpSender
     {
+        if ($this->otlpSender !== null) {
+            // Explicit override always wins. If the caller wants the override
+            // to reflect a mutated host or deferred flag they can reset it.
+            return $this->otlpSender;
+        }
         if ($this->otlpHttpHost === null) {
             return null;
         }
-        // Re-create if the user mutated otlpHttpHost or otlpDeferred after
-        // construction (both are public for backwards compat).
-        if (
-            $this->otlpSender === null
-            || $this->otlpSender->otlpHttpHost !== $this->otlpHttpHost
-            || $this->otlpSender->deferred !== $this->otlpDeferred
-        ) {
-            $this->otlpSender = new OtlpSender($this->otlpHttpHost, $this->otlpDeferred);
+        // Process-wide singleton — one sender (one cURL handle, one shutdown
+        // hook entry) per (host, deferred) pair regardless of how many
+        // CustomLogger / Span instances we create.
+        return OtlpSender::shared($this->otlpHttpHost, $this->otlpDeferred);
+    }
+
+    private function writeStdout(string $line): void
+    {
+        if ($this->stdoutHandle === null) {
+            $this->stdoutHandle = fopen('php://stdout', 'w');
         }
-        return $this->otlpSender;
+        fwrite($this->stdoutHandle, $line . "\n");
     }
 
     private function toJson(array $line): string

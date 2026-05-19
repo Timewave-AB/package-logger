@@ -22,6 +22,8 @@ class Span
 
     public ?OtlpSender $otlpSender;
 
+    private bool $ended = false;
+
     public function __construct(
         string $name,
         string $serviceName = 'my-app-logger',
@@ -55,7 +57,7 @@ class Span
                         'name' => $this->name,
                         'kind' => 0, // Unspecified
                         'startTimeUnixNano' => (string) (int) (microtime(true) * 1000000000),
-                        'endTimeUnixNano' => (string) (int) (microtime(true) * 1000000000), // Should be updated when the span ends!
+                        'endTimeUnixNano' => (string) (int) (microtime(true) * 1000000000), // Updated when the span ends!
                     ]]
                 ]]
             ]]
@@ -90,9 +92,20 @@ class Span
         // first copy.
     }
 
+    /**
+     * Idempotent: a second call is a no-op so callers (and finally blocks)
+     * can defensively end() without producing duplicate spans at the
+     * collector.
+     */
     public function end(): void
     {
-        $this->payload['resourceSpans'][0]['scopeSpans'][0]['spans'][0]['endTimeUnixNano'] = (string) (int) (microtime(true) * 1000000000);
+        if ($this->ended) {
+            return;
+        }
+        $this->ended = true;
+
+        $this->payload['resourceSpans'][0]['scopeSpans'][0]['spans'][0]['endTimeUnixNano']
+            = (string) (int) (microtime(true) * 1000000000);
 
         $sender = $this->getOtlpSender();
         if ($sender !== null) {
@@ -100,16 +113,41 @@ class Span
         }
     }
 
+    /**
+     * Surface forgotten end() calls. Previously, the constructor POSTed a
+     * placeholder span so a forgotten end() left a zero-duration span at
+     * the collector — ugly but visible. Now an un-ended span is invisible
+     * to the collector, so we emit one stderr warning per dropped span
+     * to keep the loss observable.
+     */
+    public function __destruct()
+    {
+        if ($this->ended) {
+            return;
+        }
+        if ($this->otlpHttpHost === null && $this->otlpSender === null) {
+            return; // span was never wired to OTLP at all — no warning needed
+        }
+        $stderr = fopen('php://stderr', 'w');
+        if ($stderr !== false) {
+            fwrite($stderr, "Span '{$this->name}' destroyed without end() — span not POSTed to OTLP\n");
+        }
+    }
+
     private function getOtlpSender(): ?OtlpSender
     {
-        if ($this->otlpSender !== null) {
-            return $this->otlpSender;
-        }
+        // If a host is set on the span and it doesn't match the injected
+        // sender's host, the caller mutated $otlpHttpHost after construction
+        // and expects POSTs to go to the new host. Rebuild against the
+        // shared registry so the change takes effect instead of being
+        // silently ignored.
         if ($this->otlpHttpHost !== null) {
-            $this->otlpSender = new OtlpSender($this->otlpHttpHost);
+            if ($this->otlpSender === null || $this->otlpSender->getOtlpHttpHost() !== $this->otlpHttpHost) {
+                $this->otlpSender = OtlpSender::shared($this->otlpHttpHost);
+            }
             return $this->otlpSender;
         }
-        return null;
+        return $this->otlpSender;
     }
 
     private function createSpanId(): string

@@ -6,25 +6,49 @@ use Timewave\Logger\Classes\OtlpSender;
 
 class OtlpSenderTest extends OtlpHttpServerTestCase
 {
-    public function testHttpWritesStopwatchLineToStdoutPerCall(): void
+    public function testStopwatchIsDisabledByDefault(): void
     {
         $url = var_export($this->otlpHost(), true);
         $output = $this->runLoggerScript("
             \$sender = new \\Timewave\\Logger\\Classes\\OtlpSender($url);
             \$sender->http('/v1/traces', ['a' => 1]);
-            \$sender->http('/v1/logs', ['b' => 2]);
         ");
 
         $stopwatchLines = array_values(array_filter(
             $this->nonEmptyLines($output),
             static function (string $l): bool {
-                return strpos($l, 'OTLP stopwatch') !== false;
+                return strpos($l, 'otlp_stopwatch') !== false;
+            }
+        ));
+        $this->assertCount(0, $stopwatchLines, "stopwatch should be off by default to avoid log flooding; got:\n{$output}");
+    }
+
+    public function testStopwatchEmitsJsonLinePerCallWhenEnabled(): void
+    {
+        $url = var_export($this->otlpHost(), true);
+        $output = $this->runLoggerScript("
+            \$sender = new \\Timewave\\Logger\\Classes\\OtlpSender($url);
+            \$sender->stopwatchEnabled = true;
+            \$sender->http('/v1/traces', ['a' => 1]);
+            \$sender->http('/v1/logs', ['b' => 2]);
+        ");
+
+        // Stopwatch is JSON-shaped so it doesn't poison JSON-lines pipelines.
+        $stopwatchLines = array_values(array_filter(
+            $this->nonEmptyLines($output),
+            static function (string $l): bool {
+                $decoded = json_decode($l, true);
+                return is_array($decoded) && ($decoded['name'] ?? null) === 'otlp_stopwatch';
             }
         ));
 
         $this->assertCount(2, $stopwatchLines, "expected one stopwatch line per http() call, got:\n{$output}");
-        $this->assertMatchesRegularExpression('#OTLP stopwatch.*?/v1/traces.*?\d+ms#', $stopwatchLines[0]);
-        $this->assertMatchesRegularExpression('#OTLP stopwatch.*?/v1/logs.*?\d+ms#', $stopwatchLines[1]);
+        $first = json_decode($stopwatchLines[0], true);
+        $second = json_decode($stopwatchLines[1], true);
+        $this->assertSame('/v1/traces', $first['path']);
+        $this->assertSame('/v1/logs', $second['path']);
+        $this->assertIsInt($first['latencyMs']);
+        $this->assertSame('DEBUG', $first['level']);
     }
 
     public function testCurlHandleIsReusedAcrossHttpCalls(): void
@@ -59,7 +83,7 @@ class OtlpSenderTest extends OtlpHttpServerTestCase
 
         $sender->flush();
 
-        $requests = $this->readRequests();
+        $requests = $this->waitForRequests(2);
         $this->assertCount(2, $requests);
         $this->assertSame('/v1/traces', $requests[0]['path']);
         $this->assertSame('/v1/logs', $requests[1]['path']);
@@ -68,16 +92,70 @@ class OtlpSenderTest extends OtlpHttpServerTestCase
     public function testDeferredFlushHappensOnShutdown(): void
     {
         $url = var_export($this->otlpHost(), true);
-        // Subprocess registers no manual flush; the OtlpSender's shutdown hook
-        // must be what actually delivers the queued request to the collector.
+        // Subprocess registers no manual flush; the process-wide shutdown
+        // hook must be what actually delivers the queued request.
         $this->runLoggerScript("
             \$sender = new \\Timewave\\Logger\\Classes\\OtlpSender($url, true);
             \$sender->http('/v1/traces', ['shutdown' => true]);
             // process exits; shutdown hook flushes
         ");
 
-        $requests = $this->readRequests();
+        $requests = $this->waitForRequests(1);
         $this->assertCount(1, $requests, 'shutdown hook should flush queued requests');
         $this->assertSame('/v1/traces', $requests[0]['path']);
+    }
+
+    public function testFlushIsReentrancyGuarded(): void
+    {
+        $sender = new OtlpSender($this->otlpHost(), true);
+        $sender->http('/v1/traces', ['a' => 1]);
+
+        // Force the in-flight flag on, simulate a nested invocation, then
+        // confirm the original flush still drains its batch.
+        $rp = new \ReflectionProperty(OtlpSender::class, 'isFlushing');
+        if (\PHP_VERSION_ID < 80100) {
+            $rp->setAccessible(true);
+        }
+        $rp->setValue($sender, true);
+        $sender->flush();
+        $this->assertCount(0, $this->readRequests(), 'nested flush should early-return without sending');
+
+        $rp->setValue($sender, false);
+        $sender->flush();
+        $this->assertCount(1, $this->waitForRequests(1));
+    }
+
+    public function testDeferredQueueCapDropsNewItemsWhenFull(): void
+    {
+        $sender = new OtlpSender($this->otlpHost(), true);
+
+        // Fill past the cap without flushing.
+        $cap = OtlpSender::MAX_QUEUE_SIZE;
+        for ($i = 0; $i < $cap + 10; $i++) {
+            $sender->http('/v1/logs', ['i' => $i]);
+        }
+
+        $rp = new \ReflectionProperty(OtlpSender::class, 'queue');
+        if (\PHP_VERSION_ID < 80100) {
+            $rp->setAccessible(true);
+        }
+        $this->assertSame(
+            $cap,
+            count($rp->getValue($sender)),
+            'queue should not grow beyond MAX_QUEUE_SIZE — overflow protects long-running workers from OOM'
+        );
+    }
+
+    public function testSharedReturnsSameInstancePerHostDeferredPair(): void
+    {
+        $a = OtlpSender::shared($this->otlpHost(), false);
+        $b = OtlpSender::shared($this->otlpHost(), false);
+        $this->assertSame($a, $b, 'same (host, deferred) pair must return the cached sender');
+
+        $c = OtlpSender::shared($this->otlpHost(), true);
+        $this->assertNotSame($a, $c, 'different deferred flag must yield a different sender');
+
+        $d = OtlpSender::shared('http://other:4318', false);
+        $this->assertNotSame($a, $d, 'different host must yield a different sender');
     }
 }

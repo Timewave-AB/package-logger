@@ -3,6 +3,7 @@
 namespace Timewave\Logger\Tests;
 
 use PHPUnit\Framework\TestCase;
+use Timewave\Logger\Classes\OtlpSender;
 
 /**
  * Boots a real PHP built-in HTTP server per test that mimics an OTLP collector:
@@ -27,6 +28,7 @@ abstract class OtlpHttpServerTestCase extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        OtlpSender::clearSharedRegistry();
         $this->serverPort = $this->findFreePort();
         $this->requestsFile = tempnam(sys_get_temp_dir(), 'otlpreqs_');
         file_put_contents($this->requestsFile, '');
@@ -80,6 +82,7 @@ abstract class OtlpHttpServerTestCase extends TestCase
         if (!empty($this->routerScript)) {
             @unlink($this->routerScript);
         }
+        OtlpSender::clearSharedRegistry();
         parent::tearDown();
     }
 
@@ -110,6 +113,26 @@ abstract class OtlpHttpServerTestCase extends TestCase
             }
         }
         return $out;
+    }
+
+    /**
+     * Read requests with retry. Use this when asserting on requests written
+     * by a subprocess — even after the subprocess exited, the parent's view
+     * of the shared file can lag behind the LOCK_EX-protected write on slow
+     * CI runners. Returns whatever is currently visible after either the
+     * count is met or the timeout elapses.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    protected function waitForRequests(int $expectedCount, float $timeoutSec = 2.0): array
+    {
+        $deadline = microtime(true) + $timeoutSec;
+        $requests = $this->readRequests();
+        while (count($requests) < $expectedCount && microtime(true) < $deadline) {
+            usleep(20_000);
+            $requests = $this->readRequests();
+        }
+        return $requests;
     }
 
     private function findFreePort(): int
