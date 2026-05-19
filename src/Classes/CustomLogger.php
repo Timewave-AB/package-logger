@@ -15,18 +15,8 @@ class CustomLogger implements CustomLoggerInterface
     public ?string $otlpHttpHost;
 
     /**
-     * When true, OTLP HTTP calls are queued in memory and flushed at process
-     * shutdown (or via explicit OtlpSender::flush()). This keeps the OTLP
-     * collector off the request's critical path. Default: false (synchronous).
-     *
-     * See README "Deferred (fire-and-forget) OTLP" for caveats about
-     * long-running PHP-FPM workers.
-     */
-    public bool $otlpDeferred = false;
-
-    /**
      * Explicit sender override. When null (default), getOtlpSender() returns
-     * the process-wide singleton from OtlpSender::shared(host, deferred).
+     * the process-wide singleton from OtlpSender::shared($host).
      */
     public ?OtlpSender $otlpSender = null;
 
@@ -121,7 +111,6 @@ class CustomLogger implements CustomLoggerInterface
             $this->otlpHttpHost,
             $span
         );
-        $child->otlpDeferred = $this->otlpDeferred;
         $child->otlpSender = $this->otlpSender; // propagate any explicit override
 
         return $child;
@@ -186,17 +175,16 @@ class CustomLogger implements CustomLoggerInterface
     private function getOtlpSender(): ?OtlpSender
     {
         if ($this->otlpSender !== null) {
-            // Explicit override always wins. If the caller wants the override
-            // to reflect a mutated host or deferred flag they can reset it.
+            // Explicit override always wins.
             return $this->otlpSender;
         }
         if ($this->otlpHttpHost === null) {
             return null;
         }
         // Process-wide singleton — one sender (one cURL handle, one shutdown
-        // hook entry) per (host, deferred) pair regardless of how many
-        // CustomLogger / Span instances we create.
-        return OtlpSender::shared($this->otlpHttpHost, $this->otlpDeferred);
+        // hook entry) per host regardless of how many CustomLogger / Span
+        // instances we create.
+        return OtlpSender::shared($this->otlpHttpHost);
     }
 
     private function writeStdout(string $line): void

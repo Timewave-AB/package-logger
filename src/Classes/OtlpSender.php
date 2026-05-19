@@ -2,10 +2,20 @@
 
 namespace Timewave\Logger\Classes;
 
+/**
+ * OTLP HTTP sender, fire-and-forget by design.
+ *
+ * Every call to http() appends to an in-memory queue. The queue is drained
+ * either by an explicit flush() / flushAll() or by a single process-wide
+ * shutdown hook registered on first use. Sends never block the caller — the
+ * library assumes a low-latency OTLP collector running locally (e.g. otelcol
+ * on the same VM/pod) that handles batching, retries, and the actual wire
+ * traffic.
+ */
 class OtlpSender
 {
     /**
-     * Soft cap on the deferred queue. Long-running workers with a dead
+     * Soft cap on the in-memory queue. Long-running workers with a dead
      * collector would otherwise grow this without bound until OOM.
      */
     public const MAX_QUEUE_SIZE = 10000;
@@ -19,23 +29,20 @@ class OtlpSender
     public const STOPWATCH_THRESHOLD_MS = 200;
 
     /**
-     * Process-wide registry of senders keyed by (host, deferred). Lets
-     * many CustomLogger / Span instances share one OtlpSender (and one
-     * cURL handle + one shutdown hook) for the life of the process.
+     * Process-wide registry of senders keyed by host. Many CustomLogger /
+     * Span instances share one OtlpSender (and one cURL handle + one
+     * shutdown-hook entry) for the life of the process.
      *
      * @var array<string, self>
      */
     private static array $sharedRegistry = [];
 
-    /**
-     * Set once per process so the shutdown function is wired exactly
-     * once, regardless of how many deferred senders are created.
-     */
+    /** Set once per process so the shutdown function is wired exactly once. */
     private static bool $shutdownHookRegistered = false;
 
     /**
-     * Senders that have buffered items awaiting shutdown flush. Static
-     * so the single shutdown hook can drain every deferred sender.
+     * Senders that have buffered items awaiting flush. Tracked statically
+     * so flushAll() (and the process-wide shutdown hook) can drain them all.
      *
      * @var array<int, self>
      */
@@ -43,12 +50,10 @@ class OtlpSender
 
     private string $otlpHttpHost;
 
-    private bool $deferred;
-
     /** @var resource|\CurlHandle|null reused across calls to keep host resolution + TLS state warm */
     private $curlHandle = null;
 
-    /** @var array<int, array{0: string, 1: array}> path/payload pairs queued in deferred mode */
+    /** @var array<int, array{0: string, 1: array}> path/payload pairs awaiting flush */
     private array $queue = [];
 
     private bool $isFlushing = false;
@@ -58,26 +63,39 @@ class OtlpSender
     /** @var resource|null cached php://stdout handle to avoid per-call fopen churn */
     private $stdoutHandle = null;
 
-    public function __construct(string $otlpHttpHost, bool $deferred = false)
+    public function __construct(string $otlpHttpHost)
     {
         $this->otlpHttpHost = $otlpHttpHost;
-        $this->deferred = $deferred;
     }
 
     /**
-     * Get the process-wide sender for this (host, deferred) pair. Use this
-     * from production call sites — it keeps the cURL handle and (when
-     * deferred) the shutdown hook bounded to one per endpoint. Tests that
-     * want a fresh isolated sender should call `new OtlpSender(...)`
-     * directly.
+     * Get the process-wide sender for this host. Use this from production
+     * call sites — it keeps the cURL handle and shutdown-hook entry bounded
+     * to one per endpoint. Tests that want a fresh isolated sender should
+     * call `new OtlpSender(...)` directly.
      */
-    public static function shared(string $otlpHttpHost, bool $deferred = false): self
+    public static function shared(string $otlpHttpHost): self
     {
-        $key = $otlpHttpHost . '|' . ($deferred ? '1' : '0');
-        if (!isset(self::$sharedRegistry[$key])) {
-            self::$sharedRegistry[$key] = new self($otlpHttpHost, $deferred);
+        if (!isset(self::$sharedRegistry[$otlpHttpHost])) {
+            self::$sharedRegistry[$otlpHttpHost] = new self($otlpHttpHost);
         }
-        return self::$sharedRegistry[$key];
+        return self::$sharedRegistry[$otlpHttpHost];
+    }
+
+    /**
+     * Drain every sender that has queued items. Call this manually when you
+     * need OTLP delivery before a specific point — e.g. right before
+     * `fastcgi_finish_request()` so the response goes out after the flush
+     * rather than blocking on it, or in tests that need to assert delivery.
+     */
+    public static function flushAll(): void
+    {
+        // Snapshot keys; flush() unsets entries as it runs.
+        foreach (array_keys(self::$sendersNeedingFlush) as $id) {
+            if (isset(self::$sendersNeedingFlush[$id])) {
+                self::$sendersNeedingFlush[$id]->flush();
+            }
+        }
     }
 
     /** @internal Drop every shared sender. Used by tests; not for production. */
@@ -87,7 +105,7 @@ class OtlpSender
         self::$sendersNeedingFlush = [];
         // Note: $shutdownHookRegistered is intentionally kept — PHP's shutdown
         // hook can't be unregistered, so flipping the flag back would just
-        // register a second hook on the next deferred call.
+        // register a second hook on the next use.
     }
 
     public function getOtlpHttpHost(): string
@@ -95,47 +113,36 @@ class OtlpSender
         return $this->otlpHttpHost;
     }
 
-    public function isDeferred(): bool
-    {
-        return $this->deferred;
-    }
-
     public function http(string $path, array $payload): void
     {
-        if ($this->deferred) {
-            if (count($this->queue) >= self::MAX_QUEUE_SIZE) {
-                if (!$this->queueFullWarned) {
-                    $this->writeStdout(
-                        'OTLP ERROR: deferred queue full (>= ' . self::MAX_QUEUE_SIZE
-                        . ' items), dropping new entries until flush'
-                    );
-                    $this->queueFullWarned = true;
-                }
-                return;
+        if (count($this->queue) >= self::MAX_QUEUE_SIZE) {
+            if (!$this->queueFullWarned) {
+                $this->writeStdout(
+                    'OTLP ERROR: queue full (>= ' . self::MAX_QUEUE_SIZE
+                    . ' items), dropping new entries until flush'
+                );
+                $this->queueFullWarned = true;
             }
-
-            $this->queue[] = [$path, $payload];
-            self::$sendersNeedingFlush[spl_object_id($this)] = $this;
-            $this->registerShutdownHook();
             return;
         }
 
-        $this->send($path, $payload);
+        $this->queue[] = [$path, $payload];
+        self::$sendersNeedingFlush[spl_object_id($this)] = $this;
+        $this->registerShutdownHook();
     }
 
     public function flush(): void
     {
-        // Reentrancy guard: a nested call (shutdown hook firing while a
-        // manual flush() is mid-loop, or a future send() that somehow
-        // re-enters) returns immediately rather than double-sending.
+        // Reentrancy guard: a nested call returns immediately rather than
+        // double-sending.
         if ($this->isFlushing) {
             return;
         }
         $this->isFlushing = true;
         try {
             // Snapshot the queue and clear it. Any append that happens during
-            // the send loop (e.g. another part of the app logging) will be
-            // picked up by a subsequent flush() call, not by this one.
+            // the send loop will be picked up by a subsequent flush(), not
+            // by this one.
             $batch = $this->queue;
             $this->queue = [];
             $this->queueFullWarned = false;
@@ -155,14 +162,7 @@ class OtlpSender
             return;
         }
         self::$shutdownHookRegistered = true;
-        register_shutdown_function(static function (): void {
-            // Snapshot keys; flush() unsets entries as it runs.
-            foreach (array_keys(self::$sendersNeedingFlush) as $id) {
-                if (isset(self::$sendersNeedingFlush[$id])) {
-                    self::$sendersNeedingFlush[$id]->flush();
-                }
-            }
-        });
+        register_shutdown_function([self::class, 'flushAll']);
     }
 
     private function send(string $path, array $payload): void

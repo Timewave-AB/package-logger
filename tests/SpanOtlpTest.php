@@ -10,7 +10,8 @@ class SpanOtlpTest extends OtlpHttpServerTestCase
     public function testConstructorDoesNotPostToOtlp(): void
     {
         $span = new Span('op', 'svc', null, null, $this->otlpHost());
-        $span->end(); // end() now sends; we end so __destruct doesn't warn after the assertion.
+        $span->end();
+        OtlpSender::flushAll();
 
         // We allow the one POST from end(), but importantly the constructor itself
         // must not POST — assert that only ONE request was received, not two.
@@ -26,6 +27,7 @@ class SpanOtlpTest extends OtlpHttpServerTestCase
     {
         $span = new Span('op', 'svc', null, null, $this->otlpHost());
         $span->end();
+        OtlpSender::flushAll();
 
         $requests = $this->waitForRequests(1);
         $this->assertCount(1, $requests, 'end() should POST the span exactly once');
@@ -40,6 +42,7 @@ class SpanOtlpTest extends OtlpHttpServerTestCase
         $span->end();
         $span->end();
         $span->end();
+        OtlpSender::flushAll();
 
         usleep(100_000); // ensure any spurious POST would have landed
         $requests = $this->readRequests();
@@ -55,6 +58,7 @@ class SpanOtlpTest extends OtlpHttpServerTestCase
         // to the new host, not silently keep using the original.
         $span->otlpHttpHost = $original; // identity; just exercises the rebuild check
         $span->end();
+        OtlpSender::flushAll();
 
         $requests = $this->waitForRequests(1);
         $this->assertCount(1, $requests);

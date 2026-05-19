@@ -10,6 +10,7 @@ class OtlpSenderTest extends OtlpHttpServerTestCase
     {
         // Fast in-process collector — call completes in single-digit ms,
         // well under STOPWATCH_THRESHOLD_MS, so nothing should be written.
+        // Subprocess so its shutdown hook is what flushes.
         $url = var_export($this->otlpHost(), true);
         $output = $this->runLoggerScript("
             \$sender = new \\Timewave\\Logger\\Classes\\OtlpSender($url);
@@ -25,31 +26,33 @@ class OtlpSenderTest extends OtlpHttpServerTestCase
         $this->assertCount(0, $stopwatchLines, "stopwatch must stay silent below threshold; got:\n{$output}");
     }
 
-    public function testCurlHandleIsReusedAcrossHttpCalls(): void
+    public function testCurlHandleIsReusedAcrossFlushes(): void
     {
         $sender = new OtlpSender($this->otlpHost());
         $sender->http('/v1/traces', ['a' => 1]);
+        $sender->flush();
 
         $rp = new \ReflectionProperty(OtlpSender::class, 'curlHandle');
         if (\PHP_VERSION_ID < 80100) {
             $rp->setAccessible(true);
         }
         $handleAfterFirst = $rp->getValue($sender);
-        $this->assertNotNull($handleAfterFirst, 'curl handle should be retained after first call');
+        $this->assertNotNull($handleAfterFirst, 'curl handle should be retained after first flush');
 
         $sender->http('/v1/logs', ['b' => 2]);
+        $sender->flush();
         $handleAfterSecond = $rp->getValue($sender);
 
         $this->assertSame(
             $handleAfterFirst,
             $handleAfterSecond,
-            'OtlpSender should reuse the same cURL handle across calls (keeps host resolution and TLS state)'
+            'OtlpSender should reuse the same cURL handle across flushes (keeps host resolution and TLS state)'
         );
     }
 
-    public function testDeferredFlushSendsAllQueuedRequests(): void
+    public function testFlushSendsAllQueuedRequests(): void
     {
-        $sender = new OtlpSender($this->otlpHost(), true);
+        $sender = new OtlpSender($this->otlpHost());
         $sender->http('/v1/traces', ['a' => 1]);
         $sender->http('/v1/logs', ['b' => 2]);
 
@@ -63,13 +66,13 @@ class OtlpSenderTest extends OtlpHttpServerTestCase
         $this->assertSame('/v1/logs', $requests[1]['path']);
     }
 
-    public function testDeferredFlushHappensOnShutdown(): void
+    public function testFlushHappensAutomaticallyOnShutdown(): void
     {
         $url = var_export($this->otlpHost(), true);
         // Subprocess registers no manual flush; the process-wide shutdown
         // hook must be what actually delivers the queued request.
         $this->runLoggerScript("
-            \$sender = new \\Timewave\\Logger\\Classes\\OtlpSender($url, true);
+            \$sender = new \\Timewave\\Logger\\Classes\\OtlpSender($url);
             \$sender->http('/v1/traces', ['shutdown' => true]);
             // process exits; shutdown hook flushes
         ");
@@ -81,7 +84,7 @@ class OtlpSenderTest extends OtlpHttpServerTestCase
 
     public function testFlushIsReentrancyGuarded(): void
     {
-        $sender = new OtlpSender($this->otlpHost(), true);
+        $sender = new OtlpSender($this->otlpHost());
         $sender->http('/v1/traces', ['a' => 1]);
 
         // Force the in-flight flag on, simulate a nested invocation, then
@@ -99,9 +102,24 @@ class OtlpSenderTest extends OtlpHttpServerTestCase
         $this->assertCount(1, $this->waitForRequests(1));
     }
 
-    public function testDeferredQueueCapDropsNewItemsWhenFull(): void
+    public function testFlushAllDrainsEverySharedSender(): void
     {
-        $sender = new OtlpSender($this->otlpHost(), true);
+        // Two distinct hosts → two distinct shared senders.
+        $primary = OtlpSender::shared($this->otlpHost());
+        $secondary = OtlpSender::shared($this->otlpHost() . '/');
+
+        $primary->http('/v1/traces', ['a' => 1]);
+        $secondary->http('/v1/logs', ['b' => 2]);
+        $this->assertCount(0, $this->readRequests(), 'shared senders queue, do not send eagerly');
+
+        OtlpSender::flushAll();
+
+        $this->assertCount(2, $this->waitForRequests(2));
+    }
+
+    public function testQueueCapDropsNewItemsWhenFull(): void
+    {
+        $sender = new OtlpSender($this->otlpHost());
 
         // Fill past the cap without flushing.
         $cap = OtlpSender::MAX_QUEUE_SIZE;
@@ -120,16 +138,13 @@ class OtlpSenderTest extends OtlpHttpServerTestCase
         );
     }
 
-    public function testSharedReturnsSameInstancePerHostDeferredPair(): void
+    public function testSharedReturnsSameInstancePerHost(): void
     {
-        $a = OtlpSender::shared($this->otlpHost(), false);
-        $b = OtlpSender::shared($this->otlpHost(), false);
-        $this->assertSame($a, $b, 'same (host, deferred) pair must return the cached sender');
+        $a = OtlpSender::shared($this->otlpHost());
+        $b = OtlpSender::shared($this->otlpHost());
+        $this->assertSame($a, $b, 'same host must return the cached sender');
 
-        $c = OtlpSender::shared($this->otlpHost(), true);
-        $this->assertNotSame($a, $c, 'different deferred flag must yield a different sender');
-
-        $d = OtlpSender::shared('http://other:4318', false);
-        $this->assertNotSame($a, $d, 'different host must yield a different sender');
+        $c = OtlpSender::shared('http://other:4318');
+        $this->assertNotSame($a, $c, 'different host must yield a different sender');
     }
 }

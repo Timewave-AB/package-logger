@@ -147,7 +147,7 @@ class Span
             }
             return $this->otlpSender;
         }
-        return $this->otlpSender;
+        return $this->otlpSender; // explicit injection with no host override
     }
 
     private function createSpanId(): string

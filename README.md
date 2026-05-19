@@ -54,11 +54,28 @@ $requestSpan->endSpan();
 
 A DSN string, example: `'http://localhost:4318'`. The target must be an OTLP/HTTP endpoint. Payloads are sent JSON-encoded (`Content-Type: application/json`); most collectors (e.g. otelcol's HTTP receiver) accept this on `:4318` alongside the protobuf encoding.
 
-Within a process, all `CustomLogger` instances pointing at the same `(host, deferred)` pair share one `OtlpSender` (one cURL handle, one shutdown hook). That keeps host resolution and TLS state warm and bounds resource use in long-running workers.
+**The library expects a low-latency OTLP collector — typically `otelcol` running on the same VM/pod as the application.** That local collector handles batching, retries, and outbound wire traffic. This assumption shapes the design choices below.
+
+Within a process, all `CustomLogger` instances pointing at the same host share one `OtlpSender` (one cURL handle, one shutdown-hook entry). That keeps host resolution + TLS state warm and bounds resource use in long-running workers.
+
+### OTLP sending is fire-and-forget
+
+Every call to `OtlpSender::http()` (and every `Span::end()` / log line emitted via `CustomLogger`) appends the payload to an in-memory queue rather than blocking on the collector. The queue is drained either:
+
+- automatically at process shutdown via a single process-wide `register_shutdown_function` hook, or
+- explicitly by calling `OtlpSender::flushAll()` (drain every shared sender) or `$sender->flush()` (drain one).
+
+Practical consequences:
+
+- **No call ever blocks the request path on OTLP I/O.** Even if the collector is slow or hung, `http()` returns immediately. The actual cURL POST happens during the flush at shutdown.
+- **PHP-FPM**: call `OtlpSender::flushAll()` *before* `fastcgi_finish_request()` if you want OTLP delivered before the response goes out; otherwise the response ships first and the flush runs during worker idle time. `fastcgi_finish_request()` exists only in the FPM SAPI.
+- **Queue cap**: the queue is capped at `OtlpSender::MAX_QUEUE_SIZE` (10 000) items per sender. If the collector is dead and the queue fills, new entries are dropped and one `OTLP ERROR: queue full…` line is written to stdout until the queue drains.
+- **Hard process kill (SIGKILL, OOM-killer)**: the shutdown hook does not run, so in-flight items are lost. With a local collector this gap is small; if it matters to you, call `OtlpSender::flushAll()` at critical points.
+- **Forgotten `end()`**: a `Span` that is destroyed without `end()` is invisible to the collector. The destructor writes one stderr warning per dropped span (`Span 'name' destroyed without end() — span not POSTed to OTLP`) so the omission is observable.
 
 ### OTLP stopwatch (per-call latency)
 
-Every `OtlpSender` call measures its own latency, but only writes a record to stdout when the call took longer than `OtlpSender::STOPWATCH_THRESHOLD_MS` (200 ms). That gives you a production-safe signal for slow OTLP without flooding the log stream on every span.
+Every `send()` measures its own latency, but only writes a record to stdout when the call took longer than `OtlpSender::STOPWATCH_THRESHOLD_MS` (200 ms). That gives you a production-safe signal for slow OTLP without flooding the log stream on every span.
 
 When the threshold is exceeded the sender writes a JSON line:
 
@@ -66,24 +83,7 @@ When the threshold is exceeded the sender writes a JSON line:
 {"level":"WARNING","name":"otlp_stopwatch","path":"/v1/traces","latencyMs":287,"thresholdMs":200}
 ```
 
-No configuration needed; it's always on.
-
-### Deferred (fire-and-forget) OTLP
-
-By default OTLP HTTP calls are synchronous: they block the request path until the collector responds. To keep them off the critical path, enable deferred mode — calls are queued in memory and flushed at process shutdown (or manually via `OtlpSender::flush()`).
-
-```php
-$log = new CustomLogger('my-app-name');
-$log->otlpHttpHost = 'http://localhost:4318';
-$log->otlpDeferred = true;
-```
-
-Caveats — read before turning this on in production:
-
-- **PHP-FPM**: pair with `fastcgi_finish_request()` to send the response to the client *before* the deferred flush runs. This function exists only in the FPM SAPI; calling it from CLI/Apache will fatal. The worker stays busy during the post-response flush, so size your worker pool to cover the extra time.
-- **Long-running workers** (FPM, RoadRunner, FrankenPHP, Swoole, queue workers): one `OtlpSender` per `(host, deferred)` pair is shared for the life of the process, so deferred mode is safe to use without leaking shutdown hooks per request.
-- **Queue cap**: the in-memory queue is capped at `OtlpSender::MAX_QUEUE_SIZE` (10 000) items. If the collector is down and the queue fills, new entries are dropped and a single `OTLP ERROR: deferred queue full…` line is written to stdout until the queue drains.
-- **Forgotten `end()`**: in synchronous and deferred mode alike, a `Span` that is destroyed without `end()` is invisible to the collector. The destructor writes one stderr warning per dropped span (`Span 'name' destroyed without end() — span not POSTed to OTLP`) so the omission is observable.
+For a healthy local collector this should be effectively silent; sustained stopwatch lines mean the local collector pipeline is misbehaving.
 
 ## Local development
 
