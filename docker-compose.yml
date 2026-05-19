@@ -3,41 +3,42 @@
 #
 #   docker compose run --rm composer install
 #   docker compose run --rm phpunit
-#   docker compose run --rm phpunit-8       # PHP 8.x compatibility check
+#   docker compose run --rm phpunit-8.3     # PHP 8.3 compatibility check
+#   docker compose run --rm phpunit-8.5     # latest stable PHP compatibility check
 #   docker compose run --rm php -v          # ad-hoc PHP invocation
 #
-# All services share the repo root mounted at /app so `vendor/` produced by the
-# `composer` service is reused by the `phpunit*` services.
+# All image tags are pinned to exact patch versions for reproducibility — bump
+# them deliberately when you want to move to a newer toolchain.
 services:
   composer:
-    image: composer:2
+    image: composer:2.9.8
     volumes:
       - .:/app
     working_dir: /app
 
   phpunit:
-    image: php:7.4-cli
+    image: php:7.4.33-cli
     volumes:
       - .:/app
     working_dir: /app
     command: vendor/bin/phpunit
 
-  phpunit-8:
-    image: php:8.3-cli
+  phpunit-8.3:
+    image: php:8.3.31-cli
     volumes:
       - .:/app
     working_dir: /app
     command: vendor/bin/phpunit
 
-  phpunit-latest:
-    image: php:8.5-cli
+  phpunit-8.5:
+    image: php:8.5.6-cli
     volumes:
       - .:/app
     working_dir: /app
     command: vendor/bin/phpunit
 
   php:
-    image: php:7.4-cli
+    image: php:7.4.33-cli
     volumes:
       - .:/app
     working_dir: /app

@@ -87,8 +87,8 @@ docker compose run --rm phpunit
 Run against PHP 8.3 and 8.5 as well (the package supports `^7.4 || ^8.0`):
 
 ```sh
-docker compose run --rm phpunit-8
-docker compose run --rm phpunit-latest
+docker compose run --rm phpunit-8.3
+docker compose run --rm phpunit-8.5
 ```
 
 Ad-hoc PHP invocations (e.g. trying a snippet, running a single test file):
@@ -97,5 +97,7 @@ Ad-hoc PHP invocations (e.g. trying a snippet, running a single test file):
 docker compose run --rm phpunit vendor/bin/phpunit --filter SpanOtlpTest
 docker compose run --rm php php -r 'echo PHP_VERSION;'
 ```
+
+All image tags are pinned to exact patch versions in `docker-compose.yml`; bump them deliberately rather than relying on rolling tags.
 
 Register an autoloader, or explicitly require the PHP files in `src/`, to consume the library from another project.
