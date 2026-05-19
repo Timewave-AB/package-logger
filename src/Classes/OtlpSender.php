@@ -11,12 +11,12 @@ class OtlpSender
     public const MAX_QUEUE_SIZE = 10000;
 
     /**
-     * Opt-in instrumentation: each send() writes a one-line JSON record
-     * tagged `otlp_stopwatch` with the per-call latency. Default false to
-     * avoid flooding log pipelines in production; tests and diagnostics
-     * flip this on per instance.
+     * Per-call latency threshold (ms). Every send() measures elapsed time
+     * but only writes the JSON-line `otlp_stopwatch` record to stdout when
+     * the call exceeded this threshold — so production gets a signal when
+     * OTLP is slow without flooding the log stream on every span.
      */
-    public bool $stopwatchEnabled = false;
+    public const STOPWATCH_THRESHOLD_MS = 200;
 
     /**
      * Process-wide registry of senders keyed by (host, deferred). Lets
@@ -189,13 +189,14 @@ class OtlpSender
         $statusCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         $error = curl_error($ch);
 
-        if ($this->stopwatchEnabled) {
-            $latencyMs = (int) round((microtime(true) - $start) * 1000);
+        $latencyMs = (int) round((microtime(true) - $start) * 1000);
+        if ($latencyMs > self::STOPWATCH_THRESHOLD_MS) {
             $this->writeStdout((string) json_encode([
-                'level' => 'DEBUG',
+                'level' => 'WARNING',
                 'name' => 'otlp_stopwatch',
                 'path' => $path,
                 'latencyMs' => $latencyMs,
+                'thresholdMs' => self::STOPWATCH_THRESHOLD_MS,
             ]));
         }
 

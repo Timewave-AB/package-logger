@@ -58,20 +58,15 @@ Within a process, all `CustomLogger` instances pointing at the same `(host, defe
 
 ### OTLP stopwatch (per-call latency)
 
-`OtlpSender` can emit a JSON-line stopwatch record per call so you can see how long each OTLP POST took:
+Every `OtlpSender` call measures its own latency, but only writes a record to stdout when the call took longer than `OtlpSender::STOPWATCH_THRESHOLD_MS` (200 ms). That gives you a production-safe signal for slow OTLP without flooding the log stream on every span.
+
+When the threshold is exceeded the sender writes a JSON line:
 
 ```json
-{"level":"DEBUG","name":"otlp_stopwatch","path":"/v1/traces","latencyMs":12}
+{"level":"WARNING","name":"otlp_stopwatch","path":"/v1/traces","latencyMs":287,"thresholdMs":200}
 ```
 
-It is **off by default** to avoid log flooding in production. Turn it on for diagnostics:
-
-```php
-$log = new CustomLogger('my-app-name');
-$log->otlpHttpHost = 'http://localhost:4318';
-// Grab the shared sender and enable instrumentation:
-\Timewave\Logger\Classes\OtlpSender::shared($log->otlpHttpHost, $log->otlpDeferred)->stopwatchEnabled = true;
-```
+No configuration needed; it's always on.
 
 ### Deferred (fire-and-forget) OTLP
 

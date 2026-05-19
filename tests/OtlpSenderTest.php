@@ -6,8 +6,10 @@ use Timewave\Logger\Classes\OtlpSender;
 
 class OtlpSenderTest extends OtlpHttpServerTestCase
 {
-    public function testStopwatchIsDisabledByDefault(): void
+    public function testStopwatchIsSilentWhenLatencyBelowThreshold(): void
     {
+        // Fast in-process collector — call completes in single-digit ms,
+        // well under STOPWATCH_THRESHOLD_MS, so nothing should be written.
         $url = var_export($this->otlpHost(), true);
         $output = $this->runLoggerScript("
             \$sender = new \\Timewave\\Logger\\Classes\\OtlpSender($url);
@@ -20,35 +22,7 @@ class OtlpSenderTest extends OtlpHttpServerTestCase
                 return strpos($l, 'otlp_stopwatch') !== false;
             }
         ));
-        $this->assertCount(0, $stopwatchLines, "stopwatch should be off by default to avoid log flooding; got:\n{$output}");
-    }
-
-    public function testStopwatchEmitsJsonLinePerCallWhenEnabled(): void
-    {
-        $url = var_export($this->otlpHost(), true);
-        $output = $this->runLoggerScript("
-            \$sender = new \\Timewave\\Logger\\Classes\\OtlpSender($url);
-            \$sender->stopwatchEnabled = true;
-            \$sender->http('/v1/traces', ['a' => 1]);
-            \$sender->http('/v1/logs', ['b' => 2]);
-        ");
-
-        // Stopwatch is JSON-shaped so it doesn't poison JSON-lines pipelines.
-        $stopwatchLines = array_values(array_filter(
-            $this->nonEmptyLines($output),
-            static function (string $l): bool {
-                $decoded = json_decode($l, true);
-                return is_array($decoded) && ($decoded['name'] ?? null) === 'otlp_stopwatch';
-            }
-        ));
-
-        $this->assertCount(2, $stopwatchLines, "expected one stopwatch line per http() call, got:\n{$output}");
-        $first = json_decode($stopwatchLines[0], true);
-        $second = json_decode($stopwatchLines[1], true);
-        $this->assertSame('/v1/traces', $first['path']);
-        $this->assertSame('/v1/logs', $second['path']);
-        $this->assertIsInt($first['latencyMs']);
-        $this->assertSame('DEBUG', $first['level']);
+        $this->assertCount(0, $stopwatchLines, "stopwatch must stay silent below threshold; got:\n{$output}");
     }
 
     public function testCurlHandleIsReusedAcrossHttpCalls(): void
