@@ -184,12 +184,4 @@ class CustomLoggerTest extends LoggerSubprocessTestCase
         $toOtlp->invoke($logger, 0, $bogus, 'msg');
     }
 
-    /** @return string[] */
-    private function nonEmptyLines(string $output): array
-    {
-        return array_values(array_filter(
-            preg_split('/\R/', $output) ?: [],
-            static fn(string $l): bool => $l !== ''
-        ));
-    }
 }

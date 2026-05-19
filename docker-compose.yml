@@ -1,0 +1,36 @@
+# Docker workflow for local development. Contributors do not need PHP or
+# composer installed on the host — everything runs inside containers.
+#
+#   docker compose run --rm composer install
+#   docker compose run --rm phpunit
+#   docker compose run --rm phpunit-8       # PHP 8.x compatibility check
+#   docker compose run --rm php -v          # ad-hoc PHP invocation
+#
+# All services share the repo root mounted at /app so `vendor/` produced by the
+# `composer` service is reused by the `phpunit*` services.
+services:
+  composer:
+    image: composer:2
+    volumes:
+      - .:/app
+    working_dir: /app
+
+  phpunit:
+    image: php:7.4-cli
+    volumes:
+      - .:/app
+    working_dir: /app
+    command: vendor/bin/phpunit
+
+  phpunit-8:
+    image: php:8.3-cli
+    volumes:
+      - .:/app
+    working_dir: /app
+    command: vendor/bin/phpunit
+
+  php:
+    image: php:7.4-cli
+    volumes:
+      - .:/app
+    working_dir: /app

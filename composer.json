@@ -1,6 +1,6 @@
 {
     "name": "timewave/logger",
-    "version": "0.3.0",
+    "version": "0.4.0",
     "description": "Logging library",
     "type": "library",
     "license": "MIT",
@@ -21,6 +21,11 @@
             "email": "utveckling@timewave.se"
         }
     ],
+    "config": {
+      "platform": {
+        "php": "7.4"
+      }
+    },
     "require": {
       "php": "^7.4 || ^8.0"
     },

@@ -20,18 +20,22 @@ class Span
 
     public ?string $otlpHttpHost;
 
+    public ?OtlpSender $otlpSender;
+
     public function __construct(
         string $name,
         string $serviceName = 'my-app-logger',
         ?array $context = null,
         ?string $parentId = null,
-        ?string $otlpHttpHost = null
+        ?string $otlpHttpHost = null,
+        ?OtlpSender $otlpSender = null
     ) {
         $this->name = $name;
         $this->serviceName = $serviceName;
         $this->context = $context;
         $this->parentId = $parentId;
         $this->otlpHttpHost = $otlpHttpHost;
+        $this->otlpSender = $otlpSender;
 
         $this->id = $this->createSpanId();
         $this->traceId = $this->createTraceId();
@@ -80,19 +84,32 @@ class Span
             $this->payload['resourceSpans'][0]['scopeSpans'][0]['spans'][0]['parentSpanId'] = $this->parentId;
         }
 
-        if ($this->otlpHttpHost !== null) {
-            $otlpSender = new OtlpSender($this->otlpHttpHost);
-            $otlpSender->http('/v1/traces', $this->payload);
-        }
+        // Span is POSTed exactly once, when end() is called. A previous version
+        // also POSTed here with startTimeUnixNano == endTimeUnixNano, which
+        // doubled the trace count at the collector and shipped an incomplete
+        // first copy.
     }
 
     public function end(): void
     {
         $this->payload['resourceSpans'][0]['scopeSpans'][0]['spans'][0]['endTimeUnixNano'] = (string) (int) (microtime(true) * 1000000000);
-        if ($this->otlpHttpHost !== null) {
-            $otlpSender = new OtlpSender($this->otlpHttpHost);
-            $otlpSender->http('/v1/traces', $this->payload);
+
+        $sender = $this->getOtlpSender();
+        if ($sender !== null) {
+            $sender->http('/v1/traces', $this->payload);
         }
+    }
+
+    private function getOtlpSender(): ?OtlpSender
+    {
+        if ($this->otlpSender !== null) {
+            return $this->otlpSender;
+        }
+        if ($this->otlpHttpHost !== null) {
+            $this->otlpSender = new OtlpSender($this->otlpHttpHost);
+            return $this->otlpSender;
+        }
+        return null;
     }
 
     private function createSpanId(): string

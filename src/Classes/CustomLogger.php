@@ -14,6 +14,16 @@ class CustomLogger implements CustomLoggerInterface
 
     public ?string $otlpHttpHost;
 
+    /**
+     * When true, OTLP HTTP calls are queued in memory and flushed at process
+     * shutdown (or via explicit OtlpSender::flush()). This keeps the OTLP
+     * collector off the request's critical path. Default: false (synchronous).
+     */
+    public bool $otlpDeferred = false;
+
+    /** Shared sender — reused so its underlying cURL handle stays alive across calls. */
+    public ?OtlpSender $otlpSender = null;
+
     private LogFormat $logFormat;
 
     private LogLevel $logLevel;
@@ -81,15 +91,18 @@ class CustomLogger implements CustomLoggerInterface
 
     public function createSpanLogger(string $name, ?array $context = null): CustomLogger
     {
+        $sender = $this->getOtlpSender();
+
         $span = new Span(
             $name,
             $this->serviceName,
             $context,
             $this->span !== null ? $this->span->id : null,
-            $this->otlpHttpHost
+            $this->otlpHttpHost,
+            $sender
         );
 
-        return new CustomLogger(
+        $child = new CustomLogger(
             $this->serviceName,
             $this->logLevel->name,
             $this->logFormat->value,
@@ -97,6 +110,10 @@ class CustomLogger implements CustomLoggerInterface
             $this->otlpHttpHost,
             $span
         );
+        $child->otlpDeferred = $this->otlpDeferred;
+        $child->otlpSender = $sender;
+
+        return $child;
     }
 
     public function endSpan(): void
@@ -118,10 +135,10 @@ class CustomLogger implements CustomLoggerInterface
 
         $microNow = (int) (microtime(true) * 1000);
 
-        if ($this->otlpHttpHost) {
-            $otlpSender = new OtlpSender($this->otlpHttpHost);
+        $sender = $this->getOtlpSender();
+        if ($sender !== null) {
             $payload = $this->toOtlpJSON($microNow, $level, $message, $context, $exception, $this->span);
-            $otlpSender->http('/v1/logs', $payload);
+            $sender->http('/v1/logs', $payload);
         }
 
         // Add trace context to console output if span is provided
@@ -153,6 +170,23 @@ class CustomLogger implements CustomLoggerInterface
         }
 
         fwrite(fopen('php://stdout', 'w'), "$outputStr\n");
+    }
+
+    private function getOtlpSender(): ?OtlpSender
+    {
+        if ($this->otlpHttpHost === null) {
+            return null;
+        }
+        // Re-create if the user mutated otlpHttpHost or otlpDeferred after
+        // construction (both are public for backwards compat).
+        if (
+            $this->otlpSender === null
+            || $this->otlpSender->otlpHttpHost !== $this->otlpHttpHost
+            || $this->otlpSender->deferred !== $this->otlpDeferred
+        ) {
+            $this->otlpSender = new OtlpSender($this->otlpHttpHost, $this->otlpDeferred);
+        }
+        return $this->otlpSender;
     }
 
     private function toJson(array $line): string

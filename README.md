@@ -54,15 +54,47 @@ $requestSpan->endSpan();
 
 A DSN string, example: 'http://localhost:4318'. The target must be a protobuf endpoint.
 
-## Local development
+Each OTLP call writes a one-line stopwatch to stdout (`OTLP stopwatch: /v1/traces 12ms`) so per-call latency is visible alongside the rest of the log output.
 
-Either register an auto loader, or explicitly require all PHP-files in this repo, and then just start using and developing.
+### Deferred (fire-and-forget) OTLP
 
-## Running tests
+By default OTLP HTTP calls are synchronous: they block the request path until the collector responds. To keep them off the critical path, enable deferred mode — calls are queued in memory and flushed at process shutdown (or manually via `OtlpSender::flush()`).
 
-```sh
-composer install
-composer test
+```php
+$log = new CustomLogger('my-app-name');
+$log->otlpHttpHost = 'http://localhost:4318';
+$log->otlpDeferred = true;
 ```
 
-Or invoke PHPUnit directly: `vendor/bin/phpunit`.
+In PHP-FPM you can pair this with `fastcgi_finish_request()` to send the response to the client before the deferred OTLP flush runs.
+
+## Local development
+
+Everything runs through Docker via `docker-compose.yml`; no host-side PHP or composer needed.
+
+Install dependencies:
+
+```sh
+docker compose run --rm composer install
+```
+
+Run the test suite (PHP 7.4):
+
+```sh
+docker compose run --rm phpunit
+```
+
+Run against PHP 8.x as well (the package supports `^7.4 || ^8.0`):
+
+```sh
+docker compose run --rm phpunit-8
+```
+
+Ad-hoc PHP invocations (e.g. trying a snippet, running a single test file):
+
+```sh
+docker compose run --rm phpunit vendor/bin/phpunit --filter SpanOtlpTest
+docker compose run --rm php php -r 'echo PHP_VERSION;'
+```
+
+Register an autoloader, or explicitly require the PHP files in `src/`, to consume the library from another project.
