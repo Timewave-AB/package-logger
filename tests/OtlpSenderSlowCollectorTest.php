@@ -4,11 +4,7 @@ namespace Timewave\Logger\Tests;
 
 use Timewave\Logger\Classes\OtlpSender;
 
-/**
- * Slow collector (300 ms response delay) — every flushed call to send()
- * waits long enough to (a) prove http() itself never blocks on the
- * collector and (b) trip the stopwatch threshold.
- */
+/** Slow collector (300 ms) — trips the stopwatch threshold and exercises non-blocking http(). */
 class OtlpSenderSlowCollectorTest extends OtlpHttpServerTestCase
 {
     public function testHttpDoesNotBlockOnSlowCollector(): void
@@ -34,7 +30,7 @@ class OtlpSenderSlowCollectorTest extends OtlpHttpServerTestCase
         $this->assertLessThan(
             $this->responseDelayMs(),
             (int) $m[1],
-            'http() should return before the collector would have responded — fire-and-forget queues, never blocks'
+            'http() must return before the collector would have responded'
         );
     }
 
@@ -45,7 +41,6 @@ class OtlpSenderSlowCollectorTest extends OtlpHttpServerTestCase
             \$sender = new \\Timewave\\Logger\\Classes\\OtlpSender($url);
             \$sender->http('/v1/traces', ['a' => 1]);
             \$sender->http('/v1/logs', ['b' => 2]);
-            // process exits; shutdown hook flushes, each send() trips the threshold
         ");
 
         $stopwatchLines = array_values(array_filter(
@@ -69,8 +64,6 @@ class OtlpSenderSlowCollectorTest extends OtlpHttpServerTestCase
 
     protected function responseDelayMs(): int
     {
-        // Past the 200ms stopwatch threshold; comfortably above any
-        // round-trip noise on a busy CI runner.
         return 300;
     }
 }

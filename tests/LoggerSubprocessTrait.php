@@ -3,12 +3,9 @@
 namespace Timewave\Logger\Tests;
 
 /**
- * Run a snippet of PHP code in a fresh subprocess with the package autoloader
- * already required, and return everything written to stdout + stderr.
- *
- * Output via fwrite(fopen('php://stdout', 'w'), ...) goes directly to fd 1 and
- * is not captured by ob_start, so a subprocess is the only reliable way to
- * assert on the logger's real output.
+ * Run a snippet of PHP in a fresh subprocess and capture stdout+stderr.
+ * The logger writes via fwrite(fopen('php://stdout', 'w'), ...), which
+ * bypasses PHPUnit's output buffer — only a subprocess can see it.
  */
 trait LoggerSubprocessTrait
 {

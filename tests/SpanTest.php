@@ -99,37 +99,23 @@ class SpanTest extends TestCase
         $span->end();
         $secondEnd = $span->payload['resourceSpans'][0]['scopeSpans'][0]['spans'][0]['endTimeUnixNano'];
 
-        $this->assertSame(
-            $firstEnd,
-            $secondEnd,
-            'second end() must be a no-op so callers can defensively end() in finally blocks'
-        );
+        $this->assertSame($firstEnd, $secondEnd);
     }
 
     public function testDestructorWarnsOnStderrWhenSpanWasNeverEnded(): void
     {
-        // Span wired to OTLP but never end()-ed: the previous implementation
-        // POSTed a zero-duration span from the constructor; now it doesn't,
-        // so a forgotten end() must at least be observable to operators via
-        // a stderr warning.
         $output = $this->runLoggerScript("
             \$sender = new \\Timewave\\Logger\\Classes\\OtlpSender('http://127.0.0.1:1');
             \$span = new \\Timewave\\Logger\\Classes\\Span('forgotten', 'svc', null, null, \$sender);
-            // intentionally not calling \$span->end()
         ");
 
-        $this->assertStringContainsString(
-            "Span 'forgotten' destroyed without end()",
-            $output,
-            "expected stderr warning for un-ended span; got:\n{$output}"
-        );
+        $this->assertStringContainsString("Span 'forgotten' destroyed without end()", $output);
     }
 
     public function testDestructorIsSilentForSpansWithoutOtlpWiring(): void
     {
         $output = $this->runLoggerScript("
             \$span = new \\Timewave\\Logger\\Classes\\Span('noop');
-            // no sender — destructor must NOT warn
         ");
 
         $this->assertStringNotContainsString('destroyed without end()', $output);

@@ -14,14 +14,8 @@ class SpanOtlpTest extends OtlpHttpServerTestCase
         $span->end();
         OtlpSender::flushAll();
 
-        // We allow the one POST from end(), but importantly the constructor itself
-        // must not POST — assert that only ONE request was received, not two.
         $requests = $this->waitForRequests(1);
-        $this->assertCount(
-            1,
-            $requests,
-            'Span must POST exactly once (at end()); constructor must not send a provisional span'
-        );
+        $this->assertCount(1, $requests, 'Span must POST exactly once (at end()), never from the constructor');
     }
 
     public function testEndPostsExactlyOnceToTracesPath(): void
@@ -32,7 +26,7 @@ class SpanOtlpTest extends OtlpHttpServerTestCase
         OtlpSender::flushAll();
 
         $requests = $this->waitForRequests(1);
-        $this->assertCount(1, $requests, 'end() should POST the span exactly once');
+        $this->assertCount(1, $requests);
         $this->assertSame('POST', $requests[0]['method']);
         $this->assertSame('/v1/traces', $requests[0]['path']);
         $this->assertGreaterThan(0, $requests[0]['body_len']);
@@ -47,24 +41,20 @@ class SpanOtlpTest extends OtlpHttpServerTestCase
         $span->end();
         OtlpSender::flushAll();
 
-        usleep(100_000); // ensure any spurious POST would have landed
-        $requests = $this->readRequests();
-        $this->assertCount(1, $requests, 'repeated end() calls must not duplicate the span at the collector');
+        usleep(100_000);
+        $this->assertCount(1, $this->readRequests());
     }
 
     public function testInjectedSenderReceivesTheSpanAtEnd(): void
     {
-        // Swap senders at the property level — Span uses whichever sender
-        // is on it when end() runs, no caching to invalidate.
         $original = new OtlpSender($this->otlpHost());
         $span = new Span('op', 'svc', null, null, $original);
 
-        $span->otlpSender = $original; // identity; just exercises the assignment path
+        $span->otlpSender = $original;
         $span->end();
         OtlpSender::flushAll();
 
-        $requests = $this->waitForRequests(1);
-        $this->assertCount(1, $requests);
+        $this->assertCount(1, $this->waitForRequests(1));
         $this->assertSame($original, $span->otlpSender);
     }
 }

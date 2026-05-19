@@ -6,10 +6,9 @@ use PHPUnit\Framework\TestCase;
 use Timewave\Logger\Classes\OtlpSender;
 
 /**
- * Boots a real PHP built-in HTTP server per test that mimics an OTLP collector:
- * appends each received request to a temp file and responds 200 with the
- * canonical `{"partialSuccess":{}}` body. Override responseDelayMs() to simulate
- * a slow collector.
+ * Per-test `php -S` server that mimics an OTLP collector: appends each
+ * received request to a temp file (LOCK_EX) and responds with
+ * `{"partialSuccess":{}}`. Override responseDelayMs() to simulate slow.
  */
 abstract class OtlpHttpServerTestCase extends TestCase
 {
@@ -86,7 +85,6 @@ abstract class OtlpHttpServerTestCase extends TestCase
         parent::tearDown();
     }
 
-    /** Override to delay the response (ms) — useful for testing fire-and-forget. */
     protected function responseDelayMs(): int
     {
         return 0;
@@ -116,11 +114,8 @@ abstract class OtlpHttpServerTestCase extends TestCase
     }
 
     /**
-     * Read requests with retry. Use this when asserting on requests written
-     * by a subprocess — even after the subprocess exited, the parent's view
-     * of the shared file can lag behind the LOCK_EX-protected write on slow
-     * CI runners. Returns whatever is currently visible after either the
-     * count is met or the timeout elapses.
+     * Retry-read for requests written by a subprocess — the parent's view of
+     * the shared file can lag the LOCK_EX write on slow CI runners.
      *
      * @return array<int, array<string, mixed>>
      */

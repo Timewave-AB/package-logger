@@ -12,11 +12,6 @@ class CustomLogger implements CustomLoggerInterface
 
     public string $logFormatTextDelimiter;
 
-    /**
-     * OTLP transport. Construct an OtlpSender in your composition root and
-     * pass it in (via the constructor or this property). When null (default)
-     * the logger only writes to stdout.
-     */
     public ?OtlpSender $otlpSender = null;
 
     private LogFormat $logFormat;
@@ -25,7 +20,7 @@ class CustomLogger implements CustomLoggerInterface
 
     private ?Span $span;
 
-    /** @var resource|null cached php://stdout handle to avoid per-call fopen churn */
+    /** @var resource|null */
     private $stdoutHandle = null;
 
     public function __construct(
@@ -131,20 +126,12 @@ class CustomLogger implements CustomLoggerInterface
             $this->otlpSender->http('/v1/logs', $payload);
         }
 
-        // Add trace context to console output if span is provided
         if ($this->span !== null) {
-            // $context is nullable; normalize before writing to avoid
-            // auto-vivifying null into an array (deprecated on 8.1+).
-            $context = $context ?? [];
-            // Mirror the OTLP payload mapping in toOtlpJSON: traceId carries
-            // the trace id, spanId carries the span id. A previous
-            // implementation inverted these, breaking correlation between
-            // text logs and OTLP traces for the same event.
+            $context = $context ?? []; // null auto-vivify into array is deprecated on 8.1+
             $context['traceId'] = $this->span->traceId;
             $context['spanId'] = $this->span->id;
         }
 
-        // Format console output
         $line = array_filter([
             'level' => $level->name,
             'datetime' => date('Y-m-d H:i:s', (int)($microNow / 1000)),
@@ -185,24 +172,22 @@ class CustomLogger implements CustomLoggerInterface
     ) {
         switch ($level->value) {
             case LogLevel::DEBUG:
-                $severityNumber = 5;  // DEBUG
+                $severityNumber = 5;
                 break;
             case LogLevel::VERBOSE:
-                $severityNumber = 8;  // DEBUG4
+                $severityNumber = 8;
                 break;
             case LogLevel::INFO:
-                $severityNumber = 9;  // INFO
+                $severityNumber = 9;
                 break;
             case LogLevel::WARNING:
-                $severityNumber = 13; // WARN
+                $severityNumber = 13;
                 break;
             case LogLevel::ERROR:
-                $severityNumber = 17; // ERROR
+                $severityNumber = 17;
                 break;
             default:
-                // Match the original `match` expression, which threw on
-                // unhandled values. Falling through to severityNumber=0
-                // ("UNSPECIFIED" in OTLP) would silently corrupt log data.
+                // Falling through to 0 would silently emit UNSPECIFIED to OTLP.
                 throw new \LogicException(sprintf(
                     'Unmapped LogLevel for OTLP severity: %s (value=%d)',
                     $level->name,

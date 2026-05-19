@@ -18,10 +18,6 @@ class Span
 
     public ?string $parentId;
 
-    /**
-     * Sender to publish the span to on end(). Mandatory if you want the
-     * span to reach OTLP — pass it in via the constructor or assign after.
-     */
     public ?OtlpSender $otlpSender;
 
     private bool $ended = false;
@@ -55,9 +51,9 @@ class Span
                         'traceId' => $this->traceId,
                         'spanId' => $this->id,
                         'name' => $this->name,
-                        'kind' => 0, // Unspecified
+                        'kind' => 0,
                         'startTimeUnixNano' => (string) (int) (microtime(true) * 1000000000),
-                        'endTimeUnixNano' => (string) (int) (microtime(true) * 1000000000), // Updated when the span ends!
+                        'endTimeUnixNano' => (string) (int) (microtime(true) * 1000000000),
                     ]]
                 ]]
             ]]
@@ -85,18 +81,9 @@ class Span
         if ($this->parentId) {
             $this->payload['resourceSpans'][0]['scopeSpans'][0]['spans'][0]['parentSpanId'] = $this->parentId;
         }
-
-        // Span is POSTed exactly once, when end() is called. A previous version
-        // also POSTed here with startTimeUnixNano == endTimeUnixNano, which
-        // doubled the trace count at the collector and shipped an incomplete
-        // first copy.
     }
 
-    /**
-     * Idempotent: a second call is a no-op so callers (and finally blocks)
-     * can defensively end() without producing duplicate spans at the
-     * collector.
-     */
+    /** Idempotent — second call is a no-op. */
     public function end(): void
     {
         if ($this->ended) {
@@ -112,13 +99,7 @@ class Span
         }
     }
 
-    /**
-     * Surface forgotten end() calls. Previously, the constructor POSTed a
-     * placeholder span so a forgotten end() left a zero-duration span at
-     * the collector — ugly but visible. Now an un-ended span is invisible
-     * to the collector, so we emit one stderr warning per dropped span
-     * to keep the loss observable.
-     */
+    /** An un-ended OTLP-wired span is invisible to the collector — warn so the loss is observable. */
     public function __destruct()
     {
         if ($this->ended || $this->otlpSender === null) {

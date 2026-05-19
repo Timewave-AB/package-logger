@@ -2,62 +2,31 @@
 
 namespace Timewave\Logger\Classes;
 
-/**
- * OTLP HTTP sender, fire-and-forget by design.
- *
- * Every call to http() appends to an in-memory queue. The queue is drained
- * either by an explicit flush() / flushAll() or by a single process-wide
- * shutdown hook registered on first use. Sends never block the caller — the
- * library assumes a low-latency OTLP collector running locally (e.g. otelcol
- * on the same VM/pod) that handles batching, retries, and the actual wire
- * traffic.
- *
- * Senders are created and shared explicitly by callers — there is no
- * library-level singleton. Construct one per (host) in your composition
- * root and pass it into the CustomLogger / Span instances that need it.
- */
 class OtlpSender
 {
-    /**
-     * Soft cap on the in-memory queue. Long-running workers with a dead
-     * collector would otherwise grow this without bound until OOM.
-     */
+    /** Soft cap; protects long-running workers from OOM when the collector is dead. */
     public const MAX_QUEUE_SIZE = 10000;
 
-    /**
-     * Per-call latency threshold (ms). Every send() measures elapsed time
-     * but only writes the JSON-line `otlp_stopwatch` record to stdout when
-     * the call exceeded this threshold — so production gets a signal when
-     * OTLP is slow without flooding the log stream on every span.
-     */
     public const STOPWATCH_THRESHOLD_MS = 200;
 
-    /** Set once per process so the shutdown function is wired exactly once. */
     private static bool $shutdownHookRegistered = false;
 
-    /**
-     * Every sender that has ever appended to its queue, tracked statically
-     * so flushAll() (and the process-wide shutdown hook) can drain them all.
-     * Not a singleton lookup — there is no key-based retrieval — purely a
-     * cleanup roster for "flush whatever's left."
-     *
-     * @var array<int, self>
-     */
+    /** @var array<int, self> */
     private static array $sendersNeedingFlush = [];
 
     private string $otlpHttpHost;
 
-    /** @var resource|\CurlHandle|null reused across calls to keep host resolution + TLS state warm */
+    /** @var resource|\CurlHandle|null */
     private $curlHandle = null;
 
-    /** @var array<int, array{0: string, 1: array}> path/payload pairs awaiting flush */
+    /** @var array<int, array{0: string, 1: array}> */
     private array $queue = [];
 
     private bool $isFlushing = false;
 
     private bool $queueFullWarned = false;
 
-    /** @var resource|null cached php://stdout handle to avoid per-call fopen churn */
+    /** @var resource|null */
     private $stdoutHandle = null;
 
     public function __construct(string $otlpHttpHost)
@@ -65,15 +34,8 @@ class OtlpSender
         $this->otlpHttpHost = $otlpHttpHost;
     }
 
-    /**
-     * Drain every sender that has queued items. Call this manually when you
-     * need OTLP delivery before a specific point — e.g. right before
-     * `fastcgi_finish_request()` so the response goes out after the flush
-     * rather than blocking on it, or in tests that need to assert delivery.
-     */
     public static function flushAll(): void
     {
-        // Snapshot keys; flush() unsets entries as it runs.
         foreach (array_keys(self::$sendersNeedingFlush) as $id) {
             if (isset(self::$sendersNeedingFlush[$id])) {
                 self::$sendersNeedingFlush[$id]->flush();
@@ -81,13 +43,11 @@ class OtlpSender
         }
     }
 
-    /** @internal Drop tracking state. Used by tests; not for production. */
+    /** @internal Test-only state reset. */
     public static function resetForTesting(): void
     {
         self::$sendersNeedingFlush = [];
-        // Note: $shutdownHookRegistered is intentionally kept — PHP's shutdown
-        // hook can't be unregistered, so flipping the flag back would just
-        // register a second hook on the next use.
+        // $shutdownHookRegistered intentionally kept — PHP shutdown hooks can't be unregistered.
     }
 
     public function getOtlpHttpHost(): string
@@ -115,16 +75,12 @@ class OtlpSender
 
     public function flush(): void
     {
-        // Reentrancy guard: a nested call returns immediately rather than
-        // double-sending.
         if ($this->isFlushing) {
             return;
         }
         $this->isFlushing = true;
         try {
-            // Snapshot the queue and clear it. Any append that happens during
-            // the send loop will be picked up by a subsequent flush(), not
-            // by this one.
+            // Snapshot then clear: re-entrant appends survive to the next flush().
             $batch = $this->queue;
             $this->queue = [];
             $this->queueFullWarned = false;
@@ -155,15 +111,13 @@ class OtlpSender
             $this->curlHandle = curl_init();
         }
         $ch = $this->curlHandle;
-        // NOTE: every option used by send() MUST be in this array — the cURL
-        // handle is reused across calls, so anything we set elsewhere would
-        // leak between sends.
+        // Handle is reused: every option must be set here to avoid leaks across sends.
         curl_setopt_array($ch, [
             CURLOPT_URL => rtrim($this->otlpHttpHost, '/') . $path,
             CURLOPT_POST => true,
             CURLOPT_POSTFIELDS => json_encode($payload),
             CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_TIMEOUT => 2, // never wait too long on OTLP collector
+            CURLOPT_TIMEOUT => 2,
             CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
         ]);
 
@@ -187,8 +141,8 @@ class OtlpSender
             return;
         }
 
+        // OTLP's "partialSuccess" actually means full success.
         if ($statusCode === 200 && trim((string) $response) === '{"partialSuccess":{}}') {
-            // Idiotic response "partialSuccess" actually means total success.
             return;
         }
 
