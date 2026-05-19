@@ -33,7 +33,9 @@ class OtlpSenderTest extends OtlpHttpServerTestCase
         $sender->http('/v1/traces', ['a' => 1]);
 
         $rp = new \ReflectionProperty(OtlpSender::class, 'curlHandle');
-        $rp->setAccessible(true);
+        if (\PHP_VERSION_ID < 80100) {
+            $rp->setAccessible(true);
+        }
         $handleAfterFirst = $rp->getValue($sender);
         $this->assertNotNull($handleAfterFirst, 'curl handle should be retained after first call');
 

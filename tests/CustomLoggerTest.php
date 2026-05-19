@@ -171,12 +171,16 @@ class CustomLoggerTest extends LoggerSubprocessTestCase
         $bogus = $rc->newInstanceWithoutConstructor();
         foreach (['name' => 'BOGUS', 'value' => 999] as $prop => $val) {
             $rp = $rc->getProperty($prop);
-            $rp->setAccessible(true);
+            if (\PHP_VERSION_ID < 80100) {
+                $rp->setAccessible(true);
+            }
             $rp->setValue($bogus, $val);
         }
 
         $toOtlp = (new \ReflectionClass(CustomLogger::class))->getMethod('toOtlpJSON');
-        $toOtlp->setAccessible(true);
+        if (\PHP_VERSION_ID < 80100) {
+            $toOtlp->setAccessible(true);
+        }
 
         $this->expectException(\LogicException::class);
         $this->expectExceptionMessageMatches('/BOGUS.*999/');

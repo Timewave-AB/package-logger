@@ -22,14 +22,6 @@ class OtlpSender
         $this->deferred = $deferred;
     }
 
-    public function __destruct()
-    {
-        if ($this->curlHandle !== null) {
-            curl_close($this->curlHandle);
-            $this->curlHandle = null;
-        }
-    }
-
     public function http(string $path, array $payload): void
     {
         if ($this->deferred) {

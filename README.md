@@ -84,10 +84,11 @@ Run the test suite (PHP 7.4):
 docker compose run --rm phpunit
 ```
 
-Run against PHP 8.x as well (the package supports `^7.4 || ^8.0`):
+Run against PHP 8.3 and 8.5 as well (the package supports `^7.4 || ^8.0`):
 
 ```sh
 docker compose run --rm phpunit-8
+docker compose run --rm phpunit-latest
 ```
 
 Ad-hoc PHP invocations (e.g. trying a snippet, running a single test file):
