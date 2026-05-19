@@ -9,16 +9,21 @@ There will always be output to `stdout`. If Open Telemetry is configured, it wil
 ### Basic usage:
 
 ```php
+use Timewave\Logger\Classes\CustomLogger;
+use Timewave\Logger\Classes\OtlpSender;
+
 $log = new CustomLogger('my-app-name');
-$log->otlpHttpHost = 'http://localhost:4318';
+$log->otlpSender = new OtlpSender('http://localhost:4318');
 $log->info('Something happened', ['key' => 'value']);
 ```
+
+If you don't wire an `OtlpSender`, the logger only writes to stdout — OTLP is opt-in by construction.
 
 ### Usage with spans
 
 ```php
 $log = new CustomLogger('auth-4');
-$log->otlpHttpHost = 'http://localhost:4318';
+$log->otlpSender = new OtlpSender('http://localhost:4318');
 
 $requestSpan = $log->createSpanLogger('request', ['requestId' => 'Legodalf']);
 
@@ -52,18 +57,18 @@ $requestSpan->endSpan();
 
 ## Open Telemetry Collector endpoint
 
-A DSN string, example: `'http://localhost:4318'`. The target must be an OTLP/HTTP endpoint. Payloads are sent JSON-encoded (`Content-Type: application/json`); most collectors (e.g. otelcol's HTTP receiver) accept this on `:4318` alongside the protobuf encoding.
+`OtlpSender` takes a DSN string in its constructor — e.g. `new OtlpSender('http://localhost:4318')`. The target must be an OTLP/HTTP endpoint. Payloads are sent JSON-encoded (`Content-Type: application/json`); most collectors (e.g. otelcol's HTTP receiver) accept this on `:4318` alongside the protobuf encoding.
 
 **The library expects a low-latency OTLP collector — typically `otelcol` running on the same VM/pod as the application.** That local collector handles batching, retries, and outbound wire traffic. This assumption shapes the design choices below.
 
-Within a process, all `CustomLogger` instances pointing at the same host share one `OtlpSender` (one cURL handle, one shutdown-hook entry). That keeps host resolution + TLS state warm and bounds resource use in long-running workers.
+The sender is mandatory configuration: construct one in your composition root and pass it into every `CustomLogger` (and any directly-constructed `Span`) that needs OTLP. There is no library-level singleton or implicit lookup — sharing is the caller's responsibility, which keeps lifetimes explicit. One sender keeps one cURL handle, queue, and shutdown-hook entry, so reusing a single instance across the request keeps host resolution + TLS state warm and bounds resource use in long-running workers.
 
 ### OTLP sending is fire-and-forget
 
 Every call to `OtlpSender::http()` (and every `Span::end()` / log line emitted via `CustomLogger`) appends the payload to an in-memory queue rather than blocking on the collector. The queue is drained either:
 
 - automatically at process shutdown via a single process-wide `register_shutdown_function` hook, or
-- explicitly by calling `OtlpSender::flushAll()` (drain every shared sender) or `$sender->flush()` (drain one).
+- explicitly by calling `OtlpSender::flushAll()` (drain every sender that has queued items) or `$sender->flush()` (drain one).
 
 Practical consequences:
 

@@ -11,6 +11,10 @@ namespace Timewave\Logger\Classes;
  * library assumes a low-latency OTLP collector running locally (e.g. otelcol
  * on the same VM/pod) that handles batching, retries, and the actual wire
  * traffic.
+ *
+ * Senders are created and shared explicitly by callers — there is no
+ * library-level singleton. Construct one per (host) in your composition
+ * root and pass it into the CustomLogger / Span instances that need it.
  */
 class OtlpSender
 {
@@ -28,21 +32,14 @@ class OtlpSender
      */
     public const STOPWATCH_THRESHOLD_MS = 200;
 
-    /**
-     * Process-wide registry of senders keyed by host. Many CustomLogger /
-     * Span instances share one OtlpSender (and one cURL handle + one
-     * shutdown-hook entry) for the life of the process.
-     *
-     * @var array<string, self>
-     */
-    private static array $sharedRegistry = [];
-
     /** Set once per process so the shutdown function is wired exactly once. */
     private static bool $shutdownHookRegistered = false;
 
     /**
-     * Senders that have buffered items awaiting flush. Tracked statically
+     * Every sender that has ever appended to its queue, tracked statically
      * so flushAll() (and the process-wide shutdown hook) can drain them all.
+     * Not a singleton lookup — there is no key-based retrieval — purely a
+     * cleanup roster for "flush whatever's left."
      *
      * @var array<int, self>
      */
@@ -69,20 +66,6 @@ class OtlpSender
     }
 
     /**
-     * Get the process-wide sender for this host. Use this from production
-     * call sites — it keeps the cURL handle and shutdown-hook entry bounded
-     * to one per endpoint. Tests that want a fresh isolated sender should
-     * call `new OtlpSender(...)` directly.
-     */
-    public static function shared(string $otlpHttpHost): self
-    {
-        if (!isset(self::$sharedRegistry[$otlpHttpHost])) {
-            self::$sharedRegistry[$otlpHttpHost] = new self($otlpHttpHost);
-        }
-        return self::$sharedRegistry[$otlpHttpHost];
-    }
-
-    /**
      * Drain every sender that has queued items. Call this manually when you
      * need OTLP delivery before a specific point — e.g. right before
      * `fastcgi_finish_request()` so the response goes out after the flush
@@ -98,10 +81,9 @@ class OtlpSender
         }
     }
 
-    /** @internal Drop every shared sender. Used by tests; not for production. */
-    public static function clearSharedRegistry(): void
+    /** @internal Drop tracking state. Used by tests; not for production. */
+    public static function resetForTesting(): void
     {
-        self::$sharedRegistry = [];
         self::$sendersNeedingFlush = [];
         // Note: $shutdownHookRegistered is intentionally kept — PHP's shutdown
         // hook can't be unregistered, so flipping the flag back would just

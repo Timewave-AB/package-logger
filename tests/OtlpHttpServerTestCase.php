@@ -28,7 +28,7 @@ abstract class OtlpHttpServerTestCase extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        OtlpSender::clearSharedRegistry();
+        OtlpSender::resetForTesting();
         $this->serverPort = $this->findFreePort();
         $this->requestsFile = tempnam(sys_get_temp_dir(), 'otlpreqs_');
         file_put_contents($this->requestsFile, '');
@@ -82,7 +82,7 @@ abstract class OtlpHttpServerTestCase extends TestCase
         if (!empty($this->routerScript)) {
             @unlink($this->routerScript);
         }
-        OtlpSender::clearSharedRegistry();
+        OtlpSender::resetForTesting();
         parent::tearDown();
     }
 

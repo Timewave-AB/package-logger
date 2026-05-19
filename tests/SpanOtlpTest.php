@@ -9,7 +9,8 @@ class SpanOtlpTest extends OtlpHttpServerTestCase
 {
     public function testConstructorDoesNotPostToOtlp(): void
     {
-        $span = new Span('op', 'svc', null, null, $this->otlpHost());
+        $sender = new OtlpSender($this->otlpHost());
+        $span = new Span('op', 'svc', null, null, $sender);
         $span->end();
         OtlpSender::flushAll();
 
@@ -25,7 +26,8 @@ class SpanOtlpTest extends OtlpHttpServerTestCase
 
     public function testEndPostsExactlyOnceToTracesPath(): void
     {
-        $span = new Span('op', 'svc', null, null, $this->otlpHost());
+        $sender = new OtlpSender($this->otlpHost());
+        $span = new Span('op', 'svc', null, null, $sender);
         $span->end();
         OtlpSender::flushAll();
 
@@ -38,7 +40,8 @@ class SpanOtlpTest extends OtlpHttpServerTestCase
 
     public function testEndIsIdempotentAtTheWireLevel(): void
     {
-        $span = new Span('op', 'svc', null, null, $this->otlpHost());
+        $sender = new OtlpSender($this->otlpHost());
+        $span = new Span('op', 'svc', null, null, $sender);
         $span->end();
         $span->end();
         $span->end();
@@ -49,26 +52,19 @@ class SpanOtlpTest extends OtlpHttpServerTestCase
         $this->assertCount(1, $requests, 'repeated end() calls must not duplicate the span at the collector');
     }
 
-    public function testHostMutationRebuildsSender(): void
+    public function testInjectedSenderReceivesTheSpanAtEnd(): void
     {
-        $original = $this->otlpHost();
+        // Swap senders at the property level — Span uses whichever sender
+        // is on it when end() runs, no caching to invalidate.
+        $original = new OtlpSender($this->otlpHost());
         $span = new Span('op', 'svc', null, null, $original);
 
-        // Caller mutates the public host after construction. Span should send
-        // to the new host, not silently keep using the original.
-        $span->otlpHttpHost = $original; // identity; just exercises the rebuild check
+        $span->otlpSender = $original; // identity; just exercises the assignment path
         $span->end();
         OtlpSender::flushAll();
 
         $requests = $this->waitForRequests(1);
         $this->assertCount(1, $requests);
-
-        $rp = new \ReflectionProperty(Span::class, 'otlpSender');
-        if (\PHP_VERSION_ID < 80100) {
-            $rp->setAccessible(true);
-        }
-        $sender = $rp->getValue($span);
-        $this->assertInstanceOf(OtlpSender::class, $sender);
-        $this->assertSame($original, $sender->getOtlpHttpHost());
+        $this->assertSame($original, $span->otlpSender);
     }
 }

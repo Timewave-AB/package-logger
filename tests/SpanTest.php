@@ -113,7 +113,8 @@ class SpanTest extends TestCase
         // so a forgotten end() must at least be observable to operators via
         // a stderr warning.
         $output = $this->runLoggerScript("
-            \$span = new \\Timewave\\Logger\\Classes\\Span('forgotten', 'svc', null, null, 'http://127.0.0.1:1');
+            \$sender = new \\Timewave\\Logger\\Classes\\OtlpSender('http://127.0.0.1:1');
+            \$span = new \\Timewave\\Logger\\Classes\\Span('forgotten', 'svc', null, null, \$sender);
             // intentionally not calling \$span->end()
         ");
 
@@ -128,7 +129,7 @@ class SpanTest extends TestCase
     {
         $output = $this->runLoggerScript("
             \$span = new \\Timewave\\Logger\\Classes\\Span('noop');
-            // no otlpHttpHost, no sender — destructor must NOT warn
+            // no sender — destructor must NOT warn
         ");
 
         $this->assertStringNotContainsString('destroyed without end()', $output);

@@ -18,8 +18,10 @@ class Span
 
     public ?string $parentId;
 
-    public ?string $otlpHttpHost;
-
+    /**
+     * Sender to publish the span to on end(). Mandatory if you want the
+     * span to reach OTLP — pass it in via the constructor or assign after.
+     */
     public ?OtlpSender $otlpSender;
 
     private bool $ended = false;
@@ -29,14 +31,12 @@ class Span
         string $serviceName = 'my-app-logger',
         ?array $context = null,
         ?string $parentId = null,
-        ?string $otlpHttpHost = null,
         ?OtlpSender $otlpSender = null
     ) {
         $this->name = $name;
         $this->serviceName = $serviceName;
         $this->context = $context;
         $this->parentId = $parentId;
-        $this->otlpHttpHost = $otlpHttpHost;
         $this->otlpSender = $otlpSender;
 
         $this->id = $this->createSpanId();
@@ -107,9 +107,8 @@ class Span
         $this->payload['resourceSpans'][0]['scopeSpans'][0]['spans'][0]['endTimeUnixNano']
             = (string) (int) (microtime(true) * 1000000000);
 
-        $sender = $this->getOtlpSender();
-        if ($sender !== null) {
-            $sender->http('/v1/traces', $this->payload);
+        if ($this->otlpSender !== null) {
+            $this->otlpSender->http('/v1/traces', $this->payload);
         }
     }
 
@@ -122,32 +121,13 @@ class Span
      */
     public function __destruct()
     {
-        if ($this->ended) {
+        if ($this->ended || $this->otlpSender === null) {
             return;
-        }
-        if ($this->otlpHttpHost === null && $this->otlpSender === null) {
-            return; // span was never wired to OTLP at all — no warning needed
         }
         $stderr = fopen('php://stderr', 'w');
         if ($stderr !== false) {
             fwrite($stderr, "Span '{$this->name}' destroyed without end() — span not POSTed to OTLP\n");
         }
-    }
-
-    private function getOtlpSender(): ?OtlpSender
-    {
-        // If a host is set on the span and it doesn't match the injected
-        // sender's host, the caller mutated $otlpHttpHost after construction
-        // and expects POSTs to go to the new host. Rebuild against the
-        // shared registry so the change takes effect instead of being
-        // silently ignored.
-        if ($this->otlpHttpHost !== null) {
-            if ($this->otlpSender === null || $this->otlpSender->getOtlpHttpHost() !== $this->otlpHttpHost) {
-                $this->otlpSender = OtlpSender::shared($this->otlpHttpHost);
-            }
-            return $this->otlpSender;
-        }
-        return $this->otlpSender; // explicit injection with no host override
     }
 
     private function createSpanId(): string

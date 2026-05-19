@@ -2,6 +2,7 @@
 
 namespace Timewave\Logger\Contracts;
 
+use Timewave\Logger\Classes\OtlpSender;
 use Timewave\Logger\Classes\Span;
 use Timewave\Logger\Enums\LogLevel;
 
@@ -12,7 +13,7 @@ interface CustomLoggerInterface
         string $logLevel,
         string $logFormat,
         string $logFormatTextDelimiter,
-        ?string $otlpHttpHost,
+        ?OtlpSender $otlpSender,
         ?Span $span
     );
 

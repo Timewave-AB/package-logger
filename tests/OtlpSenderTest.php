@@ -102,15 +102,17 @@ class OtlpSenderTest extends OtlpHttpServerTestCase
         $this->assertCount(1, $this->waitForRequests(1));
     }
 
-    public function testFlushAllDrainsEverySharedSender(): void
+    public function testFlushAllDrainsEverySender(): void
     {
-        // Two distinct hosts → two distinct shared senders.
-        $primary = OtlpSender::shared($this->otlpHost());
-        $secondary = OtlpSender::shared($this->otlpHost() . '/');
+        // Two separately-constructed senders pointing at the same host —
+        // flushAll() must find both via the static "needs flush" tracking set,
+        // not via any registry lookup (the singleton design was dropped).
+        $primary = new OtlpSender($this->otlpHost());
+        $secondary = new OtlpSender($this->otlpHost());
 
         $primary->http('/v1/traces', ['a' => 1]);
         $secondary->http('/v1/logs', ['b' => 2]);
-        $this->assertCount(0, $this->readRequests(), 'shared senders queue, do not send eagerly');
+        $this->assertCount(0, $this->readRequests(), 'senders queue, do not send eagerly');
 
         OtlpSender::flushAll();
 
@@ -138,13 +140,4 @@ class OtlpSenderTest extends OtlpHttpServerTestCase
         );
     }
 
-    public function testSharedReturnsSameInstancePerHost(): void
-    {
-        $a = OtlpSender::shared($this->otlpHost());
-        $b = OtlpSender::shared($this->otlpHost());
-        $this->assertSame($a, $b, 'same host must return the cached sender');
-
-        $c = OtlpSender::shared('http://other:4318');
-        $this->assertNotSame($a, $c, 'different host must yield a different sender');
-    }
 }

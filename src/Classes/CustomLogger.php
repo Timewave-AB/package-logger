@@ -12,11 +12,10 @@ class CustomLogger implements CustomLoggerInterface
 
     public string $logFormatTextDelimiter;
 
-    public ?string $otlpHttpHost;
-
     /**
-     * Explicit sender override. When null (default), getOtlpSender() returns
-     * the process-wide singleton from OtlpSender::shared($host).
+     * OTLP transport. Construct an OtlpSender in your composition root and
+     * pass it in (via the constructor or this property). When null (default)
+     * the logger only writes to stdout.
      */
     public ?OtlpSender $otlpSender = null;
 
@@ -34,12 +33,12 @@ class CustomLogger implements CustomLoggerInterface
         string $logLevel = 'debug',
         string $logFormat = LogFormat::TEXT,
         string $logFormatTextDelimiter = "\t",
-        ?string $otlpHttpHost = null,
+        ?OtlpSender $otlpSender = null,
         ?Span $span = null
     ) {
         $this->serviceName = $serviceName;
         $this->logFormatTextDelimiter = $logFormatTextDelimiter;
-        $this->otlpHttpHost = $otlpHttpHost;
+        $this->otlpSender = $otlpSender;
         $this->span = $span;
 
         switch (strtoupper($logLevel)) {
@@ -90,30 +89,22 @@ class CustomLogger implements CustomLoggerInterface
 
     public function createSpanLogger(string $name, ?array $context = null): CustomLogger
     {
-        // Pass the sender explicitly so the child Span doesn't have to look it
-        // up itself (and so injected senders, used in tests, propagate down).
-        $sender = $this->getOtlpSender();
-
         $span = new Span(
             $name,
             $this->serviceName,
             $context,
             $this->span !== null ? $this->span->id : null,
-            $this->otlpHttpHost,
-            $sender
+            $this->otlpSender
         );
 
-        $child = new CustomLogger(
+        return new CustomLogger(
             $this->serviceName,
             $this->logLevel->name,
             $this->logFormat->value,
             $this->logFormatTextDelimiter,
-            $this->otlpHttpHost,
+            $this->otlpSender,
             $span
         );
-        $child->otlpSender = $this->otlpSender; // propagate any explicit override
-
-        return $child;
     }
 
     public function endSpan(): void
@@ -135,10 +126,9 @@ class CustomLogger implements CustomLoggerInterface
 
         $microNow = (int) (microtime(true) * 1000);
 
-        $sender = $this->getOtlpSender();
-        if ($sender !== null) {
+        if ($this->otlpSender !== null) {
             $payload = $this->toOtlpJSON($microNow, $level, $message, $context, $exception, $this->span);
-            $sender->http('/v1/logs', $payload);
+            $this->otlpSender->http('/v1/logs', $payload);
         }
 
         // Add trace context to console output if span is provided
@@ -170,21 +160,6 @@ class CustomLogger implements CustomLoggerInterface
         }
 
         $this->writeStdout($outputStr);
-    }
-
-    private function getOtlpSender(): ?OtlpSender
-    {
-        if ($this->otlpSender !== null) {
-            // Explicit override always wins.
-            return $this->otlpSender;
-        }
-        if ($this->otlpHttpHost === null) {
-            return null;
-        }
-        // Process-wide singleton — one sender (one cURL handle, one shutdown
-        // hook entry) per host regardless of how many CustomLogger / Span
-        // instances we create.
-        return OtlpSender::shared($this->otlpHttpHost);
     }
 
     private function writeStdout(string $line): void
