@@ -39,11 +39,11 @@ $requestSpan->endSpan();
 
 ## Log levels
 
-- `error`: Apocalypse! :O
-- `warning`: The chaos is near
-- `info`: All is well, but this message is important
-- `verbose`: Extra info, likely good in a production environment
-- `debug`: A lot of detailed logs to debug your application [default]
+- `error`: Unrecoverable error. Something is so broken the execution of the application can not continue.
+- `warning`: Something is wrong, but the application can keep running. Must be addressed.
+- `info`: All is well, but this message is important.
+- `verbose`: Extra info, likely good in a production environment that is misbehaving.
+- `debug`: A lot of detailed logs to debug your application [default]. Do not use in production.
 
 ## Log formats
 
@@ -52,7 +52,7 @@ $requestSpan->endSpan();
 
 ## Open Telemetry Collector endpoint
 
-A DSN string, example: 'http://localhost:4318'. The target must be a protobuf endpoint.
+A DSN string, example: `'http://localhost:4318'`. The target must be an OTLP/HTTP endpoint. Payloads are sent JSON-encoded (`Content-Type: application/json`); most collectors (e.g. otelcol's HTTP receiver) accept this on `:4318` alongside the protobuf encoding.
 
 Within a process, all `CustomLogger` instances pointing at the same `(host, deferred)` pair share one `OtlpSender` (one cURL handle, one shutdown hook). That keeps host resolution and TLS state warm and bounds resource use in long-running workers.
 
