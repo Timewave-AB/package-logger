@@ -45,16 +45,4 @@ class SpanOtlpTest extends OtlpHttpServerTestCase
         $this->assertCount(1, $requests);
     }
 
-    public function testInjectedSenderReceivesTheSpanAtEnd(): void
-    {
-        $original = new OtlpSender($this->otlpHost());
-        $span = new Span('op', 'svc', null, null, $original);
-
-        $span->otlpSender = $original;
-        $span->end();
-        OtlpSender::flushAll();
-
-        $this->assertCount(1, $this->waitForRequests(1));
-        $this->assertSame($original, $span->otlpSender);
-    }
 }

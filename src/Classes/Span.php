@@ -18,7 +18,7 @@ class Span
 
     public ?string $parentId;
 
-    public ?OtlpSender $otlpSender;
+    private ?OtlpSender $otlpSender;
 
     private bool $ended = false;
 

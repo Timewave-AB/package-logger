@@ -2,17 +2,17 @@
 
 namespace Timewave\Logger\Classes;
 
-use Timewave\Logger\Contracts\CustomLoggerInterface;
+use Timewave\Logger\Contracts\LoggerInterface;
 use Timewave\Logger\Enums\LogFormat;
 use Timewave\Logger\Enums\LogLevel;
 
-class CustomLogger implements CustomLoggerInterface
+class Logger implements LoggerInterface
 {
     public string $serviceName;
 
     public string $logFormatTextDelimiter;
 
-    public ?OtlpSender $otlpSender = null;
+    private ?OtlpSender $otlpSender;
 
     private LogFormat $logFormat;
 
@@ -82,7 +82,7 @@ class CustomLogger implements CustomLoggerInterface
         $this->log(LogLevel::error(), $message, $context, $exception);
     }
 
-    public function createSpanLogger(string $name, ?array $context = null): CustomLogger
+    public function createSpanLogger(string $name, ?array $context = null): Logger
     {
         $span = new Span(
             $name,
@@ -92,7 +92,7 @@ class CustomLogger implements CustomLoggerInterface
             $this->otlpSender
         );
 
-        return new CustomLogger(
+        return new Logger(
             $this->serviceName,
             $this->logLevel->name,
             $this->logFormat->value,
@@ -109,6 +109,11 @@ class CustomLogger implements CustomLoggerInterface
         }
     }
 
+    public function getSpan(): ?Span
+    {
+        return $this->span;
+    }
+
     public function log(
         LogLevel $level,
         string $message,
@@ -122,7 +127,15 @@ class CustomLogger implements CustomLoggerInterface
         $microNow = (int) (microtime(true) * 1000);
 
         if ($this->otlpSender !== null) {
-            $payload = $this->toOtlpJSON($microNow, $level, $message, $context, $exception, $this->span);
+            $payload = OtlpLogRecord::build(
+                $this->serviceName,
+                $microNow,
+                $level,
+                $message,
+                $context,
+                $exception,
+                $this->span
+            );
             $this->otlpSender->http('/v1/logs', $payload);
         }
 
@@ -160,99 +173,6 @@ class CustomLogger implements CustomLoggerInterface
     private function toJson(array $line): string
     {
         return json_encode($line, JSON_PARTIAL_OUTPUT_ON_ERROR, 128);
-    }
-
-    private function toOtlpJSON(
-        int $unixMicroTime,
-        LogLevel $level,
-        string $message,
-        ?array $context = null,
-        ?\Throwable $exception = null,
-        ?Span $span = null
-    ) {
-        switch ($level->value) {
-            case LogLevel::DEBUG:
-                $severityNumber = 5;
-                break;
-            case LogLevel::VERBOSE:
-                $severityNumber = 8;
-                break;
-            case LogLevel::INFO:
-                $severityNumber = 9;
-                break;
-            case LogLevel::WARNING:
-                $severityNumber = 13;
-                break;
-            case LogLevel::ERROR:
-                $severityNumber = 17;
-                break;
-            default:
-                // Falling through to 0 would silently emit UNSPECIFIED to OTLP.
-                throw new \LogicException(sprintf(
-                    'Unmapped LogLevel for OTLP severity: %s (value=%d)',
-                    $level->name,
-                    $level->value
-                ));
-        }
-
-        $attributes = [];
-
-        if ($context !== null) {
-            foreach ($context as $key => $value) {
-                if (is_scalar($value) || (is_object($value) && method_exists($value, '__toString')) || is_null($value)) {
-                    $value = (string) $value;
-                } else {
-                    $value = 'Non-stringeable value';
-                }
-
-                $attributes[] = [
-                    'key' => $key,
-                    'value' => ['stringValue' => $value],
-                ];
-            }
-        }
-
-        if ($exception !== null) {
-            $attributes[] = [
-                'key' => 'exception',
-                'value' => ['stringValue' => (string) $exception->getMessage()],
-            ];
-        }
-
-        $payload = [
-            'resourceLogs' => [[
-                'resource' => [
-                    'attributes' => [[
-                        'key' => 'service.name',
-                        'value' => ['stringValue' => $this->serviceName]
-                    ]]
-                ],
-                'scopeLogs' => [[
-                    'scope' => [
-                        'name' => 'timewave-logger'
-                    ],
-                    'logRecords' => [[
-                        'timeUnixNano' => (string) ($unixMicroTime * 1000000),
-                        'severityNumber' => $severityNumber,
-                        'severityText' => $level->name,
-                        'body' => [
-                            'stringValue' => $message
-                        ],
-                    ]]
-                ]]
-            ]]
-        ];
-
-        if ($span !== null) {
-            $payload['resourceLogs'][0]['scopeLogs'][0]['logRecords'][0]['traceId'] = $span->traceId;
-            $payload['resourceLogs'][0]['scopeLogs'][0]['logRecords'][0]['spanId'] = $span->id;
-        }
-
-        if (count($attributes) > 0) {
-            $payload['resourceLogs'][0]['scopeLogs'][0]['logRecords'][0]['attributes'] = $attributes;
-        }
-
-        return $payload;
     }
 
     private function toText(array $line): string

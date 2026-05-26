@@ -9,37 +9,45 @@ There will always be output to `stdout`. If Open Telemetry is configured, it wil
 ### Basic usage:
 
 ```php
-use Timewave\Logger\Classes\CustomLogger;
+use Timewave\Logger\Classes\Logger;
 use Timewave\Logger\Classes\OtlpSender;
 
-$log = new CustomLogger('my-app-name');
-$log->otlpSender = new OtlpSender('http://localhost:4318');
+$log = new Logger(
+    'my-app-name',
+    'debug',
+    'text',
+    "\t",
+    new OtlpSender('http://localhost:4318')
+);
 $log->info('Something happened', ['key' => 'value']);
 ```
 
-If you don't wire an `OtlpSender`, the logger only writes to stdout — OTLP is opt-in by construction.
+If you don't pass an `OtlpSender`, the logger only writes to stdout — OTLP is opt-in by construction. Wiring is constructor-only; the sender cannot be swapped on a live logger.
 
 ### Usage with spans
 
 ```php
-$log = new CustomLogger('auth-4');
-$log->otlpSender = new OtlpSender('http://localhost:4318');
+$log = new Logger('auth-4', 'debug', 'text', "\t", new OtlpSender('http://localhost:4318'));
 
-$requestSpan = $log->createSpanLogger('request', ['requestId' => 'Legodalf']);
+$requestSpanLog = $log->createSpanLogger('request', ['requestId' => 'Legodalf']);
 
-$requestSpan->verbose('Incoming request', ['method' => 'POST', 'path' => '/auth/password']);
+$requestSpanLog->verbose('Incoming request', ['method' => 'POST', 'path' => '/auth/password']);
 
-$loginSpan = $requestSpan->createSpanLogger('login', ['username' => 'siv']);
+$loginSpanLog = $requestSpanLog->createSpanLogger('login', ['username' => 'siv']);
 
-$loginSpan->info('User is trying to login');
+$loginSpanLog->info('User is trying to login');
 $userId = User::login('siv');
-$loginSpan->verbose('User is logged in');
+$loginSpanLog->verbose('User is logged in');
 
-$loginSpan->endSpan();
+// The underlying Span is reachable for callers that need the id or trace id
+// (e.g. to set on a response header):
+$traceId = $loginSpanLog->getSpan()->traceId;
 
-$requestSpan->debug('Request is over');
+$loginSpanLog->endSpan();
 
-$requestSpan->endSpan();
+$requestSpanLog->debug('Request is over');
+
+$requestSpanLog->endSpan();
 ```
 
 ## Log levels
@@ -61,11 +69,11 @@ $requestSpan->endSpan();
 
 **The library expects a low-latency OTLP collector — typically `otelcol` running on the same VM/pod as the application.** That local collector handles batching, retries, and outbound wire traffic. This assumption shapes the design choices below.
 
-If OTLP is enabled, sender wiring is mandatory: construct one in your composition root and pass it into every `CustomLogger` (and any directly-constructed `Span`) that needs OTLP. There is no library-level singleton or implicit lookup — sharing is the caller's responsibility, which keeps lifetimes explicit. One sender keeps one cURL handle, queue, and shutdown-hook entry, so reusing a single instance across the request keeps host resolution + TLS state warm and bounds resource use in long-running workers.
+If OTLP is enabled, sender wiring is mandatory: construct one in your composition root and pass it into every `Logger` (and any directly-constructed `Span`) that needs OTLP. There is no library-level singleton or implicit lookup — sharing is the caller's responsibility, which keeps lifetimes explicit. One sender keeps one cURL handle, queue, and shutdown-hook entry, so reusing a single instance across the request keeps host resolution + TLS state warm and bounds resource use in long-running workers.
 
 ### OTLP sending is fire-and-forget
 
-Every call to `OtlpSender::http()` (and every `Span::end()` / log line emitted via `CustomLogger`) appends the payload to an in-memory queue rather than blocking on the collector. The queue is drained either:
+Every call to `OtlpSender::http()` (and every `Span::end()` / log line emitted via `Logger`) appends the payload to an in-memory queue rather than blocking on the collector. The queue is drained either:
 
 - automatically at process shutdown via a single process-wide `register_shutdown_function` hook, or
 - explicitly by calling `OtlpSender::flushAll()` (drain every sender that has queued items) or `$sender->flush()` (drain one).

@@ -2,30 +2,22 @@
 
 namespace Timewave\Logger\Contracts;
 
-use Timewave\Logger\Classes\OtlpSender;
 use Timewave\Logger\Classes\Span;
 use Timewave\Logger\Enums\LogLevel;
 
-interface CustomLoggerInterface
+interface LoggerInterface
 {
-    public function __construct(
-        string $serviceName,
-        string $logLevel,
-        string $logFormat,
-        string $logFormatTextDelimiter,
-        ?OtlpSender $otlpSender,
-        ?Span $span
-    );
-
     public function debug(string $message, ?array $context = null, ?\Throwable $exception = null): void;
     public function verbose(string $message, ?array $context = null, ?\Throwable $exception = null): void;
     public function info(string $message, ?array $context = null, ?\Throwable $exception = null): void;
     public function warning(string $message, ?array $context = null, ?\Throwable $exception = null): void;
     public function error(string $message, ?array $context = null, ?\Throwable $exception = null): void;
 
-    public function createSpanLogger(string $name, ?array $context = null): CustomLoggerInterface;
+    public function createSpanLogger(string $name, ?array $context = null): LoggerInterface;
 
     public function endSpan(): void;
+
+    public function getSpan(): ?Span;
 
     public function log(
         LogLevel $level,
