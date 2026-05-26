@@ -7,6 +7,8 @@ use Timewave\Logger\Classes\Span;
 
 class SpanTest extends TestCase
 {
+    use LoggerSubprocessTrait;
+
     public function testSpanIdIs16HexCharsAndTraceIdIs32HexChars(): void
     {
         $span = new Span('op');
@@ -85,6 +87,38 @@ class SpanTest extends TestCase
 
         $this->assertStringEndsNotWith('000000000', $afterEnd);
         $this->assertGreaterThan((int) $startEnd, (int) $afterEnd);
+    }
+
+    public function testEndIsIdempotentAtTheFieldLevel(): void
+    {
+        $span = new Span('op');
+        $span->end();
+        $firstEnd = $span->payload['resourceSpans'][0]['scopeSpans'][0]['spans'][0]['endTimeUnixNano'];
+
+        usleep(1000);
+        $span->end();
+        $secondEnd = $span->payload['resourceSpans'][0]['scopeSpans'][0]['spans'][0]['endTimeUnixNano'];
+
+        $this->assertSame($firstEnd, $secondEnd);
+    }
+
+    public function testDestructorWarnsOnStderrWhenSpanWasNeverEnded(): void
+    {
+        $output = $this->runLoggerScript("
+            \$sender = new \\Timewave\\Logger\\Classes\\OtlpSender('http://127.0.0.1:1');
+            \$span = new \\Timewave\\Logger\\Classes\\Span('forgotten', 'svc', null, null, \$sender);
+        ");
+
+        $this->assertStringContainsString("Span 'forgotten' destroyed without end()", $output);
+    }
+
+    public function testDestructorIsSilentForSpansWithoutOtlpWiring(): void
+    {
+        $output = $this->runLoggerScript("
+            \$span = new \\Timewave\\Logger\\Classes\\Span('noop');
+        ");
+
+        $this->assertStringNotContainsString('destroyed without end()', $output);
     }
 
     public function testContextIsSerializedAsAttributes(): void

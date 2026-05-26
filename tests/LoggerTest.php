@@ -2,16 +2,15 @@
 
 namespace Timewave\Logger\Tests;
 
-use Timewave\Logger\Classes\CustomLogger;
-use Timewave\Logger\Enums\LogFormat;
-use Timewave\Logger\Enums\LogLevel;
+use Timewave\Logger\Classes\Logger;
+use Timewave\Logger\Classes\Span;
 
-class CustomLoggerTest extends LoggerSubprocessTestCase
+class LoggerTest extends LoggerSubprocessTestCase
 {
     public function testInfoEmitsTextLineWithLevelAndMessage(): void
     {
         $output = $this->runLoggerScript("
-            \$log = new Timewave\\Logger\\Classes\\CustomLogger('svc');
+            \$log = new Timewave\\Logger\\Classes\\Logger('svc');
             \$log->info('hello world');
         ");
 
@@ -27,7 +26,7 @@ class CustomLoggerTest extends LoggerSubprocessTestCase
     public function testJsonFormatProducesParseableJsonPerLine(): void
     {
         $output = $this->runLoggerScript("
-            \$log = new Timewave\\Logger\\Classes\\CustomLogger('svc', 'debug', 'json');
+            \$log = new Timewave\\Logger\\Classes\\Logger('svc', 'debug', 'json');
             \$log->warning('uh oh', ['userId' => 42]);
         ");
 
@@ -44,7 +43,7 @@ class CustomLoggerTest extends LoggerSubprocessTestCase
     public function testTextFormatSerializesContextViaHttpBuildQuery(): void
     {
         $output = $this->runLoggerScript("
-            \$log = new Timewave\\Logger\\Classes\\CustomLogger('svc');
+            \$log = new Timewave\\Logger\\Classes\\Logger('svc');
             \$log->info('msg', ['a' => 1, 'b' => 'two']);
         ");
 
@@ -58,7 +57,7 @@ class CustomLoggerTest extends LoggerSubprocessTestCase
     public function testLogLevelBelowThresholdProducesNoOutput(): void
     {
         $output = $this->runLoggerScript("
-            \$log = new Timewave\\Logger\\Classes\\CustomLogger('svc', 'warning');
+            \$log = new Timewave\\Logger\\Classes\\Logger('svc', 'warning');
             \$log->info('should be filtered');
             \$log->debug('also filtered');
         ");
@@ -69,7 +68,7 @@ class CustomLoggerTest extends LoggerSubprocessTestCase
     public function testLogLevelAtOrAboveThresholdIsEmitted(): void
     {
         $output = $this->runLoggerScript("
-            \$log = new Timewave\\Logger\\Classes\\CustomLogger('svc', 'warning');
+            \$log = new Timewave\\Logger\\Classes\\Logger('svc', 'warning');
             \$log->warning('w');
             \$log->error('e');
         ");
@@ -83,7 +82,7 @@ class CustomLoggerTest extends LoggerSubprocessTestCase
     public function testUnknownLogLevelStringDefaultsToDebug(): void
     {
         $output = $this->runLoggerScript("
-            \$log = new Timewave\\Logger\\Classes\\CustomLogger('svc', 'not-a-level');
+            \$log = new Timewave\\Logger\\Classes\\Logger('svc', 'not-a-level');
             \$log->debug('still emitted');
         ");
 
@@ -99,7 +98,7 @@ class CustomLoggerTest extends LoggerSubprocessTestCase
         // lines from the child logger — log() only injects traceId/spanId
         // into the context column when a span is present.
         $output = $this->runLoggerScript("
-            \$log = new Timewave\\Logger\\Classes\\CustomLogger('svc');
+            \$log = new Timewave\\Logger\\Classes\\Logger('svc');
             \$child = \$log->createSpanLogger('op', ['k' => 'v']);
             \$child->info('inside span');
         ");
@@ -117,7 +116,7 @@ class CustomLoggerTest extends LoggerSubprocessTestCase
         // Pin the corrected key→width mapping. The 'traceId' key carries the
         // 32-hex trace id (bin2hex(random_bytes(16))) and the 'spanId' key
         // carries the 16-hex span id (bin2hex(random_bytes(8))), matching the
-        // OTLP payload assembled in toOtlpJSON so text logs and OTLP traces
+        // OTLP payload assembled in OtlpLogRecord so text logs and OTLP traces
         // can be correlated by id.
         $this->assertMatchesRegularExpression('/^[0-9a-f]{32}$/', $context['traceId']);
         $this->assertMatchesRegularExpression('/^[0-9a-f]{16}$/', $context['spanId']);
@@ -127,12 +126,12 @@ class CustomLoggerTest extends LoggerSubprocessTestCase
     public function testCreateSpanLoggerInheritsJsonFormat(): void
     {
         // Regression: createSpanLogger previously passed $this->logFormat->name
-        // ('JSON') to the new CustomLogger, but the constructor's
-        // LogFormat::tryFrom is case-sensitive on lowercase backing values, so
-        // the child silently fell back to TEXT. Now it passes ->value ('json')
-        // and the format is preserved.
+        // ('JSON') to the new Logger, but the constructor's LogFormat::tryFrom
+        // is case-sensitive on lowercase backing values, so the child silently
+        // fell back to TEXT. Now it passes ->value ('json') and the format is
+        // preserved.
         $output = $this->runLoggerScript("
-            \$log = new Timewave\\Logger\\Classes\\CustomLogger('svc', 'debug', 'json');
+            \$log = new Timewave\\Logger\\Classes\\Logger('svc', 'debug', 'json');
             \$child = \$log->createSpanLogger('op');
             \$child->info('inside span');
         ");
@@ -147,7 +146,7 @@ class CustomLoggerTest extends LoggerSubprocessTestCase
     public function testLogMethodAcceptsLogLevelInstanceDirectly(): void
     {
         $output = $this->runLoggerScript("
-            \$log = new Timewave\\Logger\\Classes\\CustomLogger('svc');
+            \$log = new Timewave\\Logger\\Classes\\Logger('svc');
             \$log->log(Timewave\\Logger\\Enums\\LogLevel::error(), 'boom');
         ");
 
@@ -157,39 +156,39 @@ class CustomLoggerTest extends LoggerSubprocessTestCase
         $this->assertStringContainsString('boom', $lines[0]);
     }
 
-    public function testOtlpSeverityMappingThrowsOnUnknownLevel(): void
+    public function testRootLoggerHasNoSpan(): void
     {
-        // Defensive: LogLevel exposes only 5 cases, so toOtlpJSON's switch
-        // default is unreachable through the normal API. The throw exists so
-        // that if a future case is added without updating the mapping, callers
-        // fail loudly instead of silently shipping severityNumber=0
-        // ("UNSPECIFIED" in OTLP) to the collector. Reaching it from a test
-        // requires forging an invalid LogLevel via reflection.
-        $logger = new CustomLogger('svc');
-
-        $rc = new \ReflectionClass(LogLevel::class);
-        $bogus = $rc->newInstanceWithoutConstructor();
-        foreach (['name' => 'BOGUS', 'value' => 999] as $prop => $val) {
-            $rp = $rc->getProperty($prop);
-            $rp->setAccessible(true);
-            $rp->setValue($bogus, $val);
-        }
-
-        $toOtlp = (new \ReflectionClass(CustomLogger::class))->getMethod('toOtlpJSON');
-        $toOtlp->setAccessible(true);
-
-        $this->expectException(\LogicException::class);
-        $this->expectExceptionMessageMatches('/BOGUS.*999/');
-
-        $toOtlp->invoke($logger, 0, $bogus, 'msg');
+        $log = new Logger('svc');
+        $this->assertNull($log->getSpan());
     }
 
-    /** @return string[] */
-    private function nonEmptyLines(string $output): array
+    public function testCreateSpanLoggerExposesUnderlyingSpan(): void
     {
-        return array_values(array_filter(
-            preg_split('/\R/', $output) ?: [],
-            static fn(string $l): bool => $l !== ''
-        ));
+        // The convenience+composition story: createSpanLogger returns a logger
+        // wired to a span so calls just work, AND that same span is reachable
+        // via getSpan() so callers can read traceId/spanId/attributes without
+        // tracking it separately.
+        $log = new Logger('svc');
+        $child = $log->createSpanLogger('op', ['k' => 'v']);
+
+        $span = $child->getSpan();
+        $this->assertInstanceOf(Span::class, $span);
+        $this->assertSame('op', $span->name);
+        $this->assertMatchesRegularExpression('/^[0-9a-f]{32}$/', $span->traceId);
+        $this->assertMatchesRegularExpression('/^[0-9a-f]{16}$/', $span->id);
+    }
+
+    public function testNestedSpanLoggerLinksToParentSpanId(): void
+    {
+        $log = new Logger('svc');
+        $outer = $log->createSpanLogger('outer');
+        $inner = $outer->createSpanLogger('inner');
+
+        $outerSpan = $outer->getSpan();
+        $innerSpan = $inner->getSpan();
+
+        $this->assertNotNull($outerSpan);
+        $this->assertNotNull($innerSpan);
+        $this->assertSame($outerSpan->id, $innerSpan->parentId);
     }
 }

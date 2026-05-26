@@ -18,20 +18,22 @@ class Span
 
     public ?string $parentId;
 
-    public ?string $otlpHttpHost;
+    private ?OtlpSender $otlpSender;
+
+    private bool $ended = false;
 
     public function __construct(
         string $name,
         string $serviceName = 'my-app-logger',
         ?array $context = null,
         ?string $parentId = null,
-        ?string $otlpHttpHost = null
+        ?OtlpSender $otlpSender = null
     ) {
         $this->name = $name;
         $this->serviceName = $serviceName;
         $this->context = $context;
         $this->parentId = $parentId;
-        $this->otlpHttpHost = $otlpHttpHost;
+        $this->otlpSender = $otlpSender;
 
         $this->id = $this->createSpanId();
         $this->traceId = $this->createTraceId();
@@ -49,9 +51,9 @@ class Span
                         'traceId' => $this->traceId,
                         'spanId' => $this->id,
                         'name' => $this->name,
-                        'kind' => 0, // Unspecified
+                        'kind' => 0,
                         'startTimeUnixNano' => (string) (int) (microtime(true) * 1000000000),
-                        'endTimeUnixNano' => (string) (int) (microtime(true) * 1000000000), // Should be updated when the span ends!
+                        'endTimeUnixNano' => (string) (int) (microtime(true) * 1000000000),
                     ]]
                 ]]
             ]]
@@ -79,19 +81,33 @@ class Span
         if ($this->parentId) {
             $this->payload['resourceSpans'][0]['scopeSpans'][0]['spans'][0]['parentSpanId'] = $this->parentId;
         }
+    }
 
-        if ($this->otlpHttpHost !== null) {
-            $otlpSender = new OtlpSender($this->otlpHttpHost);
-            $otlpSender->http('/v1/traces', $this->payload);
+    /** Idempotent — second call is a no-op. */
+    public function end(): void
+    {
+        if ($this->ended) {
+            return;
+        }
+        $this->ended = true;
+
+        $this->payload['resourceSpans'][0]['scopeSpans'][0]['spans'][0]['endTimeUnixNano']
+            = (string) (int) (microtime(true) * 1000000000);
+
+        if ($this->otlpSender !== null) {
+            $this->otlpSender->http('/v1/traces', $this->payload);
         }
     }
 
-    public function end(): void
+    /** An un-ended OTLP-wired span is invisible to the collector — warn so the loss is observable. */
+    public function __destruct()
     {
-        $this->payload['resourceSpans'][0]['scopeSpans'][0]['spans'][0]['endTimeUnixNano'] = (string) (int) (microtime(true) * 1000000000);
-        if ($this->otlpHttpHost !== null) {
-            $otlpSender = new OtlpSender($this->otlpHttpHost);
-            $otlpSender->http('/v1/traces', $this->payload);
+        if ($this->ended || $this->otlpSender === null) {
+            return;
+        }
+        $stderr = fopen('php://stderr', 'w');
+        if ($stderr !== false) {
+            fwrite($stderr, "Span '{$this->name}' destroyed without end() — span not POSTed to OTLP\n");
         }
     }
 
