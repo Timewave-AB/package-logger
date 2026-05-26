@@ -108,7 +108,12 @@ class OtlpSender
         $start = microtime(true);
 
         if ($this->curlHandle === null) {
-            $this->curlHandle = curl_init();
+            $ch = curl_init();
+            if ($ch === false) {
+                $this->writeStdout('OTLP ERROR: curl_init() failed');
+                return;
+            }
+            $this->curlHandle = $ch;
         }
         $ch = $this->curlHandle;
         // Handle is reused: every option must be set here to avoid leaks across sends.
