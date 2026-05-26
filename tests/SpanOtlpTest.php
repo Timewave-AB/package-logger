@@ -41,8 +41,8 @@ class SpanOtlpTest extends OtlpHttpServerTestCase
         $span->end();
         OtlpSender::flushAll();
 
-        usleep(100_000);
-        $this->assertCount(1, $this->readRequests());
+        $requests = $this->waitForRequests(1);
+        $this->assertCount(1, $requests);
     }
 
     public function testInjectedSenderReceivesTheSpanAtEnd(): void

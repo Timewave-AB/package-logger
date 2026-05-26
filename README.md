@@ -61,7 +61,7 @@ $requestSpan->endSpan();
 
 **The library expects a low-latency OTLP collector — typically `otelcol` running on the same VM/pod as the application.** That local collector handles batching, retries, and outbound wire traffic. This assumption shapes the design choices below.
 
-The sender is mandatory configuration: construct one in your composition root and pass it into every `CustomLogger` (and any directly-constructed `Span`) that needs OTLP. There is no library-level singleton or implicit lookup — sharing is the caller's responsibility, which keeps lifetimes explicit. One sender keeps one cURL handle, queue, and shutdown-hook entry, so reusing a single instance across the request keeps host resolution + TLS state warm and bounds resource use in long-running workers.
+If OTLP is enabled, sender wiring is mandatory: construct one in your composition root and pass it into every `CustomLogger` (and any directly-constructed `Span`) that needs OTLP. There is no library-level singleton or implicit lookup — sharing is the caller's responsibility, which keeps lifetimes explicit. One sender keeps one cURL handle, queue, and shutdown-hook entry, so reusing a single instance across the request keeps host resolution + TLS state warm and bounds resource use in long-running workers.
 
 ### OTLP sending is fire-and-forget
 

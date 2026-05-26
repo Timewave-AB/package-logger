@@ -26,7 +26,7 @@ class OtlpSenderSlowCollectorTest extends OtlpHttpServerTestCase
             }
         }
         $this->assertNotSame('', $line, "expected 'queued in' line, got:\n{$output}");
-        preg_match('/queued in (\d+)ms/', $line, $m);
+        $this->assertSame(1, preg_match('/queued in (\d+)ms/', $line, $m), "unexpected timing format: {$line}");
         $this->assertLessThan(
             $this->responseDelayMs(),
             (int) $m[1],
