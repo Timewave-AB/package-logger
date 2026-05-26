@@ -8,7 +8,7 @@ class OtlpLogRecord
 {
     public static function build(
         string $serviceName,
-        int $unixMicroTime,
+        int $timeUnixNano,
         LogLevel $level,
         string $message,
         ?array $context = null,
@@ -77,7 +77,7 @@ class OtlpLogRecord
                         'name' => 'timewave-logger'
                     ],
                     'logRecords' => [[
-                        'timeUnixNano' => (string) ($unixMicroTime * 1000000),
+                        'timeUnixNano' => (string) $timeUnixNano,
                         'severityNumber' => $severityNumber,
                         'severityText' => $level->name,
                         'body' => [

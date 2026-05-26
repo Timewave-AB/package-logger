@@ -11,7 +11,7 @@ class OtlpLogRecordTest extends TestCase
 {
     public function testBuildEmbedsSeverityNumberAndText(): void
     {
-        $payload = OtlpLogRecord::build('svc', 1700000000000, LogLevel::warning(), 'hi');
+        $payload = OtlpLogRecord::build('svc', 1700000000000000000, LogLevel::warning(), 'hi');
 
         $record = $payload['resourceLogs'][0]['scopeLogs'][0]['logRecords'][0];
         $this->assertSame(13, $record['severityNumber']);
@@ -22,7 +22,7 @@ class OtlpLogRecordTest extends TestCase
     public function testBuildAttachesTraceAndSpanIdsWhenSpanProvided(): void
     {
         $span = new Span('op');
-        $payload = OtlpLogRecord::build('svc', 1700000000000, LogLevel::info(), 'hi', null, null, $span);
+        $payload = OtlpLogRecord::build('svc', 1700000000000000000, LogLevel::info(), 'hi', null, null, $span);
 
         $record = $payload['resourceLogs'][0]['scopeLogs'][0]['logRecords'][0];
         $this->assertSame($span->traceId, $record['traceId']);
@@ -31,7 +31,7 @@ class OtlpLogRecordTest extends TestCase
 
     public function testBuildOmitsTraceAndSpanIdsWhenNoSpan(): void
     {
-        $payload = OtlpLogRecord::build('svc', 1700000000000, LogLevel::info(), 'hi');
+        $payload = OtlpLogRecord::build('svc', 1700000000000000000, LogLevel::info(), 'hi');
 
         $record = $payload['resourceLogs'][0]['scopeLogs'][0]['logRecords'][0];
         $this->assertArrayNotHasKey('traceId', $record);
@@ -42,7 +42,7 @@ class OtlpLogRecordTest extends TestCase
     {
         $payload = OtlpLogRecord::build(
             'svc',
-            1700000000000,
+            1700000000000000000,
             LogLevel::error(),
             'boom',
             ['userId' => 42],
@@ -54,6 +54,18 @@ class OtlpLogRecordTest extends TestCase
         $this->assertSame('42', $attrs[0]['value']['stringValue']);
         $this->assertSame('exception', $attrs[1]['key']);
         $this->assertSame('blew up', $attrs[1]['value']['stringValue']);
+    }
+
+    public function testBuildEmitsTimeUnixNanoVerbatimAsString(): void
+    {
+        // OTLP spec: time_unix_nano is nanoseconds since epoch, JSON-encoded as
+        // a decimal string. The argument to build() is already in nanoseconds —
+        // no internal unit conversion — and is serialized verbatim.
+        $ns = 1700000000123456789;
+        $payload = OtlpLogRecord::build('svc', $ns, LogLevel::info(), 'hi');
+
+        $record = $payload['resourceLogs'][0]['scopeLogs'][0]['logRecords'][0];
+        $this->assertSame((string) $ns, $record['timeUnixNano']);
     }
 
     public function testBuildThrowsOnUnknownSeverity(): void

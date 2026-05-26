@@ -124,12 +124,13 @@ class Logger implements LoggerInterface
             return;
         }
 
-        $microNow = (int) (microtime(true) * 1000);
+        $now = microtime(true);
+        $timeUnixNano = (int) ($now * 1000000000);
 
         if ($this->otlpSender !== null) {
             $payload = OtlpLogRecord::build(
                 $this->serviceName,
-                $microNow,
+                $timeUnixNano,
                 $level,
                 $message,
                 $context,
@@ -147,7 +148,7 @@ class Logger implements LoggerInterface
 
         $line = array_filter([
             'level' => $level->name,
-            'datetime' => date('Y-m-d H:i:s', (int)($microNow / 1000)),
+            'datetime' => date('Y-m-d H:i:s', (int) $now),
             'message' => $message,
             'context' => $context,
             'exception' => $exception,

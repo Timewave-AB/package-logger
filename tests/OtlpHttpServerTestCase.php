@@ -157,6 +157,7 @@ if (\$delay > 0) {
     'path' => \$_SERVER['REQUEST_URI'],
     'method' => \$_SERVER['REQUEST_METHOD'],
     'body_len' => strlen(\$body),
+    'body' => \$body,
 ]) . "\\n";
 file_put_contents($reqsExport, \$entry, FILE_APPEND | LOCK_EX);
 http_response_code(200);
