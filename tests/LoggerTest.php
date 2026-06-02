@@ -248,11 +248,23 @@ class LoggerTest extends LoggerSubprocessTestCase
 
     public function testCreateSpanLoggerFromTraceparentFallsBackOnInvalidHeader(): void
     {
-        $allZeroTrace = '00-' . str_repeat('0', 32) . '-' . bin2hex(random_bytes(8)) . '-01';
-        $allZeroSpan = '00-' . bin2hex(random_bytes(16)) . '-' . str_repeat('0', 16) . '-01';
+        // trace/span are well-formed; only the version or field count is wrong,
+        // so these probe the W3C-conformance guards rather than the hex checks.
+        $trace = bin2hex(random_bytes(16));
+        $spanId = bin2hex(random_bytes(8));
+
+        $headers = [
+            'garbage',
+            '00-tooshort-abc-01',
+            '00-' . str_repeat('0', 32) . "-{$spanId}-01",   // all-zero trace
+            "00-{$trace}-" . str_repeat('0', 16) . '-01',     // all-zero span
+            "00-{$trace}-{$spanId}-01-extra",                 // version 00 must have exactly 4 fields
+            "ff-{$trace}-{$spanId}-01",                       // 'ff' is a reserved/invalid version
+            "zz-{$trace}-{$spanId}-01",                       // non-hex version
+        ];
 
         $log = new Logger('svc');
-        foreach (['garbage', '00-tooshort-abc-01', $allZeroTrace, $allZeroSpan] as $bad) {
+        foreach ($headers as $bad) {
             $span = $log->createSpanLoggerFromTraceparent('request', $bad)->getSpan();
             $this->assertNotNull($span, "header: {$bad}");
             $this->assertMatchesRegularExpression('/^[0-9a-f]{32}$/', $span->traceId, "header: {$bad}");

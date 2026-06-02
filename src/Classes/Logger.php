@@ -137,7 +137,8 @@ class Logger implements LoggerInterface
 
     /**
      * Parse "version-traceId-spanId-flags" into ['traceId','spanId'], or null
-     * when absent/invalid: 32-hex non-zero trace-id, 16-hex non-zero span-id.
+     * when absent/invalid: 2-hex version (not the reserved 'ff'), 32-hex non-zero
+     * trace-id, 16-hex non-zero span-id.
      *
      * @return array{traceId: string, spanId: string}|null
      */
@@ -152,7 +153,15 @@ class Logger implements LoggerInterface
             return null;
         }
 
-        [, $traceId, $spanId] = $parts;
+        [$version, $traceId, $spanId] = $parts;
+
+        if (!preg_match('/^[0-9a-f]{2}$/', $version) || $version === 'ff') {
+            return null;
+        }
+        // W3C: version 00 must have exactly 4 fields; unknown versions may carry more.
+        if ($version === '00' && count($parts) !== 4) {
+            return null;
+        }
 
         if (!preg_match('/^[0-9a-f]{32}$/', $traceId) || $traceId === str_repeat('0', 32)) {
             return null;
