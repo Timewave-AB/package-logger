@@ -191,4 +191,61 @@ class LoggerTest extends LoggerSubprocessTestCase
         $this->assertNotNull($innerSpan);
         $this->assertSame($outerSpan->id, $innerSpan->parentId);
     }
+
+    public function testNestedSpanLoggerInheritsParentTraceId(): void
+    {
+        $log = new Logger('svc');
+        $outer = $log->createSpanLogger('outer');
+        $inner = $outer->createSpanLogger('inner');
+
+        $this->assertSame($outer->getSpan()->traceId, $inner->getSpan()->traceId);
+    }
+
+    public function testCreateSpanLoggerFromTraceparentAdoptsTraceIdAndParentSpanId(): void
+    {
+        $traceId = bin2hex(random_bytes(16));
+        $parentSpanId = bin2hex(random_bytes(8));
+
+        $log = new Logger('svc');
+        $root = $log->createSpanLoggerFromTraceparent('request', "00-{$traceId}-{$parentSpanId}-01");
+
+        $span = $root->getSpan();
+        $this->assertSame($traceId, $span->traceId);
+        $this->assertSame($parentSpanId, $span->parentId);
+    }
+
+    public function testTraceparentRootedChildSpanSharesIncomingTraceId(): void
+    {
+        $traceId = bin2hex(random_bytes(16));
+
+        $log = new Logger('svc');
+        $root = $log->createSpanLoggerFromTraceparent('request', "00-{$traceId}-" . bin2hex(random_bytes(8)) . '-01');
+        $child = $root->createSpanLogger('login');
+
+        $this->assertSame($traceId, $child->getSpan()->traceId);
+        $this->assertSame($root->getSpan()->id, $child->getSpan()->parentId);
+    }
+
+    public function testCreateSpanLoggerFromTraceparentFallsBackOnMissingHeader(): void
+    {
+        $log = new Logger('svc');
+        $root = $log->createSpanLoggerFromTraceparent('request', null);
+
+        $span = $root->getSpan();
+        $this->assertMatchesRegularExpression('/^[0-9a-f]{32}$/', $span->traceId);
+        $this->assertNull($span->parentId);
+    }
+
+    public function testCreateSpanLoggerFromTraceparentFallsBackOnInvalidHeader(): void
+    {
+        $allZeroTrace = '00-' . str_repeat('0', 32) . '-' . bin2hex(random_bytes(8)) . '-01';
+        $allZeroSpan = '00-' . bin2hex(random_bytes(16)) . '-' . str_repeat('0', 16) . '-01';
+
+        $log = new Logger('svc');
+        foreach (['garbage', '00-tooshort-abc-01', $allZeroTrace, $allZeroSpan] as $bad) {
+            $span = $log->createSpanLoggerFromTraceparent('request', $bad)->getSpan();
+            $this->assertMatchesRegularExpression('/^[0-9a-f]{32}$/', $span->traceId, "header: {$bad}");
+            $this->assertNull($span->parentId, "header: {$bad}");
+        }
+    }
 }

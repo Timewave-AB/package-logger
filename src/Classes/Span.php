@@ -27,7 +27,8 @@ class Span
         string $serviceName = 'my-app-logger',
         ?array $context = null,
         ?string $parentId = null,
-        ?OtlpSender $otlpSender = null
+        ?OtlpSender $otlpSender = null,
+        ?string $traceId = null
     ) {
         $this->name = $name;
         $this->serviceName = $serviceName;
@@ -36,7 +37,7 @@ class Span
         $this->otlpSender = $otlpSender;
 
         $this->id = $this->createSpanId();
-        $this->traceId = $this->createTraceId();
+        $this->traceId = $traceId ?? $this->createTraceId();
 
         $this->payload = [
             'resourceSpans' => [[

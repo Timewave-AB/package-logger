@@ -50,6 +50,20 @@ $requestSpanLog->debug('Request is over');
 $requestSpanLog->endSpan();
 ```
 
+### Linking to an incoming trace (`traceparent`)
+
+When a reverse-proxy (e.g. nginx `ngx_otel_module` with `otel_trace_context propagate`) injects a W3C `traceparent` header, root your request span on it so PHP spans join the proxy's trace instead of starting a detached one:
+
+```php
+$requestSpanLog = $log->createSpanLoggerFromTraceparent(
+    'request',
+    $_SERVER['HTTP_TRACEPARENT'] ?? null,
+    ['requestId' => 'Legodalf']
+);
+```
+
+The header (`version-traceId-spanId-flags`) is parsed and validated (32-hex trace-id, 16-hex span-id, both non-zero). On a valid header the span adopts the incoming trace-id and uses the proxy's span-id as its parent. A missing or malformed header falls back to a fresh trace without throwing. Nested `createSpanLogger` calls inherit the parent's trace-id, so the whole request shares one trace.
+
 ## Log levels
 
 - `error`: Unrecoverable error. Something is so broken the execution of the application can not continue.

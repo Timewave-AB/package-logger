@@ -61,6 +61,16 @@ class SpanTest extends TestCase
         $this->assertArrayNotHasKey('parentSpanId', $record);
     }
 
+    public function testProvidedTraceIdIsUsedInsteadOfGenerated(): void
+    {
+        $traceId = bin2hex(random_bytes(16));
+        $span = new Span('op', 'svc', null, null, null, $traceId);
+
+        $this->assertSame($traceId, $span->traceId);
+        $record = $span->payload['resourceSpans'][0]['scopeSpans'][0]['spans'][0];
+        $this->assertSame($traceId, $record['traceId']);
+    }
+
     public function testTimestampsCarrySubSecondPrecision(): void
     {
         // Pre-fix bug: `(int)microtime(true) * 1e9` truncated to whole seconds

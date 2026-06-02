@@ -89,9 +89,39 @@ class Logger implements LoggerInterface
             $this->serviceName,
             $context,
             $this->span !== null ? $this->span->id : null,
-            $this->otlpSender
+            $this->otlpSender,
+            $this->span !== null ? $this->span->traceId : null
         );
 
+        return $this->wrapSpan($span);
+    }
+
+    /**
+     * Root a span on an incoming W3C `traceparent` header so PHP spans join the
+     * proxy's trace. A missing or malformed header falls back to a fresh trace
+     * without throwing.
+     */
+    public function createSpanLoggerFromTraceparent(
+        string $name,
+        ?string $traceparent = null,
+        ?array $context = null
+    ): Logger {
+        $parsed = self::parseTraceparent($traceparent);
+
+        $span = new Span(
+            $name,
+            $this->serviceName,
+            $context,
+            $parsed['spanId'] ?? null,
+            $this->otlpSender,
+            $parsed['traceId'] ?? null
+        );
+
+        return $this->wrapSpan($span);
+    }
+
+    private function wrapSpan(Span $span): Logger
+    {
         return new Logger(
             $this->serviceName,
             $this->logLevel->name,
@@ -100,6 +130,33 @@ class Logger implements LoggerInterface
             $this->otlpSender,
             $span
         );
+    }
+
+    /**
+     * Parse "version-traceId-spanId-flags" into ['traceId','spanId'], or null
+     * when absent/invalid: 32-hex non-zero trace-id, 16-hex non-zero span-id.
+     */
+    private static function parseTraceparent(?string $traceparent): ?array
+    {
+        if ($traceparent === null) {
+            return null;
+        }
+
+        $parts = explode('-', trim($traceparent));
+        if (count($parts) < 4) {
+            return null;
+        }
+
+        [, $traceId, $spanId] = $parts;
+
+        if (!preg_match('/^[0-9a-f]{32}$/', $traceId) || $traceId === str_repeat('0', 32)) {
+            return null;
+        }
+        if (!preg_match('/^[0-9a-f]{16}$/', $spanId) || $spanId === str_repeat('0', 16)) {
+            return null;
+        }
+
+        return ['traceId' => $traceId, 'spanId' => $spanId];
     }
 
     public function endSpan(): void
