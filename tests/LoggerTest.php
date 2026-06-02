@@ -198,7 +198,11 @@ class LoggerTest extends LoggerSubprocessTestCase
         $outer = $log->createSpanLogger('outer');
         $inner = $outer->createSpanLogger('inner');
 
-        $this->assertSame($outer->getSpan()->traceId, $inner->getSpan()->traceId);
+        $outerSpan = $outer->getSpan();
+        $innerSpan = $inner->getSpan();
+        $this->assertNotNull($outerSpan);
+        $this->assertNotNull($innerSpan);
+        $this->assertSame($outerSpan->traceId, $innerSpan->traceId);
     }
 
     public function testCreateSpanLoggerFromTraceparentAdoptsTraceIdAndParentSpanId(): void
@@ -210,6 +214,7 @@ class LoggerTest extends LoggerSubprocessTestCase
         $root = $log->createSpanLoggerFromTraceparent('request', "00-{$traceId}-{$parentSpanId}-01");
 
         $span = $root->getSpan();
+        $this->assertNotNull($span);
         $this->assertSame($traceId, $span->traceId);
         $this->assertSame($parentSpanId, $span->parentId);
     }
@@ -222,8 +227,12 @@ class LoggerTest extends LoggerSubprocessTestCase
         $root = $log->createSpanLoggerFromTraceparent('request', "00-{$traceId}-" . bin2hex(random_bytes(8)) . '-01');
         $child = $root->createSpanLogger('login');
 
-        $this->assertSame($traceId, $child->getSpan()->traceId);
-        $this->assertSame($root->getSpan()->id, $child->getSpan()->parentId);
+        $rootSpan = $root->getSpan();
+        $childSpan = $child->getSpan();
+        $this->assertNotNull($rootSpan);
+        $this->assertNotNull($childSpan);
+        $this->assertSame($traceId, $childSpan->traceId);
+        $this->assertSame($rootSpan->id, $childSpan->parentId);
     }
 
     public function testCreateSpanLoggerFromTraceparentFallsBackOnMissingHeader(): void
@@ -232,6 +241,7 @@ class LoggerTest extends LoggerSubprocessTestCase
         $root = $log->createSpanLoggerFromTraceparent('request', null);
 
         $span = $root->getSpan();
+        $this->assertNotNull($span);
         $this->assertMatchesRegularExpression('/^[0-9a-f]{32}$/', $span->traceId);
         $this->assertNull($span->parentId);
     }
@@ -244,6 +254,7 @@ class LoggerTest extends LoggerSubprocessTestCase
         $log = new Logger('svc');
         foreach (['garbage', '00-tooshort-abc-01', $allZeroTrace, $allZeroSpan] as $bad) {
             $span = $log->createSpanLoggerFromTraceparent('request', $bad)->getSpan();
+            $this->assertNotNull($span, "header: {$bad}");
             $this->assertMatchesRegularExpression('/^[0-9a-f]{32}$/', $span->traceId, "header: {$bad}");
             $this->assertNull($span->parentId, "header: {$bad}");
         }

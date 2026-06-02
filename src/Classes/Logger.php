@@ -82,6 +82,7 @@ class Logger implements LoggerInterface
         $this->log(LogLevel::error(), $message, $context, $exception);
     }
 
+    /** @param array<string, scalar|\Stringable|null>|null $context span attributes (key => stringable value) */
     public function createSpanLogger(string $name, ?array $context = null): Logger
     {
         $span = new Span(
@@ -100,6 +101,8 @@ class Logger implements LoggerInterface
      * Root a span on an incoming W3C `traceparent` header so PHP spans join the
      * proxy's trace. A missing or malformed header falls back to a fresh trace
      * without throwing.
+     *
+     * @param array<string, scalar|\Stringable|null>|null $context span attributes (key => stringable value)
      */
     public function createSpanLoggerFromTraceparent(
         string $name,
@@ -135,6 +138,8 @@ class Logger implements LoggerInterface
     /**
      * Parse "version-traceId-spanId-flags" into ['traceId','spanId'], or null
      * when absent/invalid: 32-hex non-zero trace-id, 16-hex non-zero span-id.
+     *
+     * @return array{traceId: string, spanId: string}|null
      */
     private static function parseTraceparent(?string $traceparent): ?array
     {
