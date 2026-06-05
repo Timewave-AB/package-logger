@@ -50,6 +50,20 @@ $requestSpanLog->debug('Request is over');
 $requestSpanLog->endSpan();
 ```
 
+### Linking to an incoming trace (`traceparent`)
+
+When a reverse-proxy (e.g. nginx `ngx_otel_module` with `otel_trace_context propagate`) injects a W3C `traceparent` header, root your request span on it so PHP spans join the proxy's trace instead of starting a detached one:
+
+```php
+$requestSpanLog = $log->createSpanLoggerFromTraceparent(
+    'request',
+    $_SERVER['HTTP_TRACEPARENT'] ?? null,
+    ['requestId' => 'Legodalf']
+);
+```
+
+The header (`version-traceId-spanId-flags`) is parsed and validated (32-hex trace-id, 16-hex span-id, both non-zero). On a valid header the span adopts the incoming trace-id and uses the proxy's span-id as its parent. A missing or malformed header falls back to a fresh trace without throwing. Nested `createSpanLogger` calls inherit the parent's trace-id, so the whole request shares one trace.
+
 ## Log levels
 
 - `error`: Unrecoverable error. Something is so broken the execution of the application can not continue.
@@ -133,3 +147,37 @@ All image tags are pinned to exact patch versions in `docker-compose.yml`; bump 
 `composer.json` also pins `config.platform.php = "7.4"` so dependency resolution always targets the lowest supported PHP. Without that pin, running `composer install` under PHP 8 (as the `composer:2.9.8` image does) would pull dev deps that drop PHP 7.4 support — e.g. `doctrine/instantiator` ≥ 2.x uses PHP 8.3 typed-constant syntax and silently breaks the PHPUnit run on 7.4.
 
 Register an autoloader, or explicitly require the PHP files in `src/`, to consume the library from another project.
+
+## Changelog
+
+### 0.5.0
+
+- Link spans to an incoming W3C `traceparent` header via `Logger::createSpanLoggerFromTraceparent()` so PHP spans join the reverse-proxy's trace instead of a detached one.
+- `Span` accepts an optional `traceId`; nested `createSpanLogger` spans now inherit their parent's trace-id.
+
+### 0.4.0
+
+- Correct OTLP span timestamps to sub-second precision and add a per-call OTLP stopwatch (warns over a 200 ms threshold).
+- OTLP sending is always fire-and-forget — the queue drains at shutdown or via `OtlpSender::flushAll()`.
+- **Breaking:** dropped the OTLP singleton; an `OtlpSender` must be constructed and injected explicitly.
+- **Breaking:** renamed `CustomLogger` to `Logger` and extracted `OtlpLogRecord`.
+
+### 0.3.0
+
+- PHP 7.4 compatibility (`^7.4 || ^8.0`) and a Docker-based test workflow.
+
+### 0.2.2
+
+- Fixed span-logger config propagation (log level/format were passed by the wrong enum member).
+
+### 0.2.1
+
+- Fixed missing `otlpHttpHost` on `Span`.
+
+### 0.2.0
+
+- Added OpenTelemetry (OTLP) logging.
+
+### 0.1.0
+
+- Initial release: stdout logger with opinionated log levels and `text`/`json` formats.

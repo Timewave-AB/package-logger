@@ -191,4 +191,84 @@ class LoggerTest extends LoggerSubprocessTestCase
         $this->assertNotNull($innerSpan);
         $this->assertSame($outerSpan->id, $innerSpan->parentId);
     }
+
+    public function testNestedSpanLoggerInheritsParentTraceId(): void
+    {
+        $log = new Logger('svc');
+        $outer = $log->createSpanLogger('outer');
+        $inner = $outer->createSpanLogger('inner');
+
+        $outerSpan = $outer->getSpan();
+        $innerSpan = $inner->getSpan();
+        $this->assertNotNull($outerSpan);
+        $this->assertNotNull($innerSpan);
+        $this->assertSame($outerSpan->traceId, $innerSpan->traceId);
+    }
+
+    public function testCreateSpanLoggerFromTraceparentAdoptsTraceIdAndParentSpanId(): void
+    {
+        $traceId = bin2hex(random_bytes(16));
+        $parentSpanId = bin2hex(random_bytes(8));
+
+        $log = new Logger('svc');
+        $root = $log->createSpanLoggerFromTraceparent('request', "00-{$traceId}-{$parentSpanId}-01");
+
+        $span = $root->getSpan();
+        $this->assertNotNull($span);
+        $this->assertSame($traceId, $span->traceId);
+        $this->assertSame($parentSpanId, $span->parentId);
+    }
+
+    public function testTraceparentRootedChildSpanSharesIncomingTraceId(): void
+    {
+        $traceId = bin2hex(random_bytes(16));
+
+        $log = new Logger('svc');
+        $root = $log->createSpanLoggerFromTraceparent('request', "00-{$traceId}-" . bin2hex(random_bytes(8)) . '-01');
+        $child = $root->createSpanLogger('login');
+
+        $rootSpan = $root->getSpan();
+        $childSpan = $child->getSpan();
+        $this->assertNotNull($rootSpan);
+        $this->assertNotNull($childSpan);
+        $this->assertSame($traceId, $childSpan->traceId);
+        $this->assertSame($rootSpan->id, $childSpan->parentId);
+    }
+
+    public function testCreateSpanLoggerFromTraceparentFallsBackOnMissingHeader(): void
+    {
+        $log = new Logger('svc');
+        $root = $log->createSpanLoggerFromTraceparent('request', null);
+
+        $span = $root->getSpan();
+        $this->assertNotNull($span);
+        $this->assertMatchesRegularExpression('/^[0-9a-f]{32}$/', $span->traceId);
+        $this->assertNull($span->parentId);
+    }
+
+    public function testCreateSpanLoggerFromTraceparentFallsBackOnInvalidHeader(): void
+    {
+        // trace/span are well-formed; only the version or field count is wrong,
+        // so these probe the W3C-conformance guards rather than the hex checks.
+        $trace = bin2hex(random_bytes(16));
+        $spanId = bin2hex(random_bytes(8));
+
+        $headers = [
+            'garbage',
+            '00-tooshort-abc-01',
+            '00-' . str_repeat('0', 32) . "-{$spanId}-01",   // all-zero trace
+            "00-{$trace}-" . str_repeat('0', 16) . '-01',     // all-zero span
+            "00-{$trace}-{$spanId}-01-extra",                 // version 00 must have exactly 4 fields
+            "ff-{$trace}-{$spanId}-01",                       // 'ff' is a reserved/invalid version
+            "zz-{$trace}-{$spanId}-01",                       // non-hex version
+        ];
+
+        $log = new Logger('svc');
+        foreach ($headers as $bad) {
+            $span = $log->createSpanLoggerFromTraceparent('request', $bad)->getSpan();
+            $this->assertNotNull($span, "header: {$bad}");
+            $this->assertMatchesRegularExpression('/^[0-9a-f]{32}$/', $span->traceId, "header: {$bad}");
+            $this->assertNull($span->parentId, "header: {$bad}");
+        }
+    }
 }
