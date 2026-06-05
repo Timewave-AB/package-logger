@@ -17,14 +17,14 @@ services:
     working_dir: /app
 
   phpunit:
-    image: php:8.5.7-cli
+    image: php:7.4.33-cli
     volumes:
       - .:/app
     working_dir: /app
     command: vendor/bin/phpunit
 
   phpunit-8.3:
-    image: php:8.5.7-cli
+    image: php:8.3.31-cli
     volumes:
       - .:/app
     working_dir: /app
@@ -38,7 +38,7 @@ services:
     command: vendor/bin/phpunit
 
   php:
-    image: php:8.5.7-cli
+    image: php:7.4.33-cli
     volumes:
       - .:/app
     working_dir: /app
