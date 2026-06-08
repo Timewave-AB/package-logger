@@ -1,0 +1,5 @@
+# Inherit Timewave's central CodeRabbit config.
+remote_config:
+  repository: "Timewave-AB/coderabbit"
+  ref: "main"
+  path: ".coderabbit.yml"
