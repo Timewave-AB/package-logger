@@ -1,6 +1,5 @@
 {
     "name": "timewave/logger",
-    "version": "0.6.0",
     "description": "Logging library",
     "type": "library",
     "license": "MIT",

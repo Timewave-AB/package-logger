@@ -148,6 +148,19 @@ All image tags are pinned to exact patch versions in `docker-compose.yml`; bump 
 
 Register an autoloader, or explicitly require the PHP files in `src/`, to consume the library from another project.
 
+## Releasing
+
+The package is published on [Packagist](https://packagist.org/packages/timewave/logger) as `timewave/logger`. The version is taken from the git tag — there is no `version` field in `composer.json`.
+
+To cut a release:
+
+1. Add a changelog entry below for the new version.
+2. Create a [GitHub release](https://github.com/Timewave-AB/package-logger/releases/new) with a semver tag `vX.Y.Z` (e.g. `v0.6.0`). On `0.x`, bump the minor for breaking changes and the patch otherwise.
+
+Packagist auto-updates from the GitHub hook, so the new version appears within a minute or two — no manual step.
+
+One-time setup (already done once per repo): on [your Packagist profile](https://packagist.org/profile/edit) click **Connect to GitHub** and accept, which lets Packagist manage the hook automatically. Alternatively add a repo webhook with payload URL `https://packagist.org/api/github?username=<packagist-user>`, content type `application/json`, and your Packagist API token as the secret.
+
 ## Changelog
 
 ### 0.6.0
