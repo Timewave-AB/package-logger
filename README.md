@@ -150,7 +150,7 @@ Register an autoloader, or explicitly require the PHP files in `src/`, to consum
 
 ## Changelog
 
-### 0.5.1
+### 0.6.0
 
 - Declare `createSpanLoggerFromTraceparent()` on `LoggerInterface` so consumers type-hinted against the interface can call it.
 
