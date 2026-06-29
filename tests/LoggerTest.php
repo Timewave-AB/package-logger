@@ -4,6 +4,7 @@ namespace Timewave\Logger\Tests;
 
 use Timewave\Logger\Classes\Logger;
 use Timewave\Logger\Classes\Span;
+use Timewave\Logger\Contracts\LoggerInterface;
 
 class LoggerTest extends LoggerSubprocessTestCase
 {
@@ -244,6 +245,11 @@ class LoggerTest extends LoggerSubprocessTestCase
         $this->assertNotNull($span);
         $this->assertMatchesRegularExpression('/^[0-9a-f]{32}$/', $span->traceId);
         $this->assertNull($span->parentId);
+    }
+
+    public function testLoggerInterfaceDeclaresCreateSpanLoggerFromTraceparent(): void
+    {
+        $this->assertTrue(method_exists(LoggerInterface::class, 'createSpanLoggerFromTraceparent'));
     }
 
     public function testCreateSpanLoggerFromTraceparentFallsBackOnInvalidHeader(): void

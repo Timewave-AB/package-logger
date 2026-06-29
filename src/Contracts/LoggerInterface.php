@@ -15,6 +15,12 @@ interface LoggerInterface
 
     public function createSpanLogger(string $name, ?array $context = null): LoggerInterface;
 
+    public function createSpanLoggerFromTraceparent(
+        string $name,
+        ?string $traceparent = null,
+        ?array $context = null
+    ): LoggerInterface;
+
     public function endSpan(): void;
 
     public function getSpan(): ?Span;
