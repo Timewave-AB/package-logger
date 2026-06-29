@@ -150,6 +150,10 @@ Register an autoloader, or explicitly require the PHP files in `src/`, to consum
 
 ## Changelog
 
+### 0.5.1
+
+- Declare `createSpanLoggerFromTraceparent()` on `LoggerInterface` so consumers type-hinted against the interface can call it.
+
 ### 0.5.0
 
 - Link spans to an incoming W3C `traceparent` header via `Logger::createSpanLoggerFromTraceparent()` so PHP spans join the reverse-proxy's trace instead of a detached one.
