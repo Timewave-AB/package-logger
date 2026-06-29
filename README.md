@@ -157,9 +157,9 @@ To cut a release:
 1. Add a changelog entry below for the new version.
 2. Create a [GitHub release](https://github.com/Timewave-AB/package-logger/releases/new) with a semver tag `vX.Y.Z` (e.g. `v0.6.0`). On `0.x`, bump the minor for breaking changes and the patch otherwise.
 
-Packagist auto-updates from the GitHub hook, so the new version appears within a minute or two — no manual step.
+A GitHub webhook notifies Packagist on every push, so the new version appears within a minute or two — no manual step.
 
-One-time setup (already done once per repo): on [your Packagist profile](https://packagist.org/profile/edit) click **Connect to GitHub** and accept, which lets Packagist manage the hook automatically. Alternatively add a repo webhook with payload URL `https://packagist.org/api/github?username=<packagist-user>`, content type `application/json`, and your Packagist API token as the secret.
+The webhook is already configured; this is only documented in case it needs re-creating (repo → Settings → Webhooks): payload URL `https://packagist.org/api/github?username=timewave`, content type `application/json`, secret = the `timewave` Packagist account's API token, subscribed to the `push` event.
 
 ## Changelog
 
