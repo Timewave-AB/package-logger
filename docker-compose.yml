@@ -11,7 +11,7 @@
 # them deliberately when you want to move to a newer toolchain.
 services:
   composer:
-    image: composer:2.10.1
+    image: composer:2.10.2
     volumes:
       - .:/app
     working_dir: /app
