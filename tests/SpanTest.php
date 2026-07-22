@@ -142,4 +142,14 @@ class SpanTest extends TestCase
         $this->assertSame('tenant', $attrs[1]['key']);
         $this->assertSame('acme', $attrs[1]['value']['stringValue']);
     }
+
+    public function testNonScalarContextValuesAreJsonEncoded(): void
+    {
+        // Arrays must serialize as JSON, not "Non-stringeable value".
+        $span = new Span('op', 'svc', ['accountIds' => ['acc-1', 'acc-2']]);
+
+        $attr = $span->payload['resourceSpans'][0]['scopeSpans'][0]['spans'][0]['attributes'][0];
+        $this->assertSame('accountIds', $attr['key']);
+        $this->assertSame('["acc-1","acc-2"]', $attr['value']['stringValue']);
+    }
 }

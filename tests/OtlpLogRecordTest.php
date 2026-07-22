@@ -56,6 +56,23 @@ class OtlpLogRecordTest extends TestCase
         $this->assertSame('blew up', $attrs[1]['value']['stringValue']);
     }
 
+    public function testBuildJsonEncodesNonScalarContextValues(): void
+    {
+        // Array/object labels must survive as JSON, not collapse to the literal
+        // "Non-stringeable value" (which lost the real accountIds).
+        $payload = OtlpLogRecord::build(
+            'svc',
+            1700000000000000000,
+            LogLevel::info(),
+            'hi',
+            ['accountIds' => ['acc-1', 'acc-2']]
+        );
+
+        $attr = $payload['resourceLogs'][0]['scopeLogs'][0]['logRecords'][0]['attributes'][0];
+        $this->assertSame('accountIds', $attr['key']);
+        $this->assertSame('["acc-1","acc-2"]', $attr['value']['stringValue']);
+    }
+
     public function testBuildEmitsTimeUnixNanoVerbatimAsString(): void
     {
         // OTLP spec: time_unix_nano is nanoseconds since epoch, JSON-encoded as
