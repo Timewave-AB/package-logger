@@ -25,7 +25,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout new semver tag action
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: timewave-ab/action-new-semver-tag
           path: ./actions/new-semver-tag
