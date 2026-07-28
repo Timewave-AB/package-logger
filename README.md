@@ -163,6 +163,9 @@ The webhook is already configured; this is only documented in case it needs re-c
 
 ## Changelog
 
+### 0.6.1
+- Fixed non-stringeable value error.
+
 ### 0.6.0
 
 - Declare `createSpanLoggerFromTraceparent()` on `LoggerInterface` so consumers type-hinted against the interface can call it.
