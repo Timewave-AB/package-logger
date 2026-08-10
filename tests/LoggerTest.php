@@ -288,7 +288,6 @@ class LoggerTest extends LoggerSubprocessTestCase
 
     public function testCreateChildSnapshotsContextAtCreation(): void
     {
-        // Copy, not a live link: neither side sees the other's later edits.
         $log = new Logger('svc', 'debug', 'text', "\t", null, null, ['env' => 'prod']);
         $child = $log->createChild(['tenant' => 'acme']);
 
@@ -389,6 +388,39 @@ class LoggerTest extends LoggerSubprocessTestCase
         $context = $this->jsonContext(trim($output));
         $this->assertMatchesRegularExpression('/^[0-9a-f]{32}$/', $context['traceId']);
         $this->assertMatchesRegularExpression('/^[0-9a-f]{16}$/', $context['spanId']);
+    }
+
+    public function testNumericContextKeysSurviveAndPerCallStillWins(): void
+    {
+        // PHP casts numeric-string keys to int, and array_merge renumbers those
+        // from 0 instead of overwriting — silently corrupting a caller's keys.
+        $output = $this->runLoggerScript("
+            \$log = new Timewave\\Logger\\Classes\\Logger('svc', 'debug', 'json', \"\\t\", null, null, ['7' => 'standing']);
+            \$log->info('numeric keys', ['404' => 'not found', '7' => 'per-call']);
+        ");
+
+        $this->assertSame([7 => 'per-call', 404 => 'not found'], $this->jsonContext(trim($output)));
+    }
+
+    public function testNumericContextKeysSurviveWithoutStandingContext(): void
+    {
+        $output = $this->runLoggerScript("
+            \$log = new Timewave\\Logger\\Classes\\Logger('svc', 'debug', 'json');
+            \$log->info('numeric key', ['404' => 'not found']);
+        ");
+
+        $this->assertSame([404 => 'not found'], $this->jsonContext(trim($output)));
+    }
+
+    public function testStandingContextReachesTheTextFormattedLine(): void
+    {
+        $output = $this->runLoggerScript("
+            \$log = new Timewave\\Logger\\Classes\\Logger('svc', 'debug', 'text', \"\\t\", null, null, ['env' => 'prod']);
+            \$log->info('msg', ['x' => 1]);
+        ");
+
+        $parts = explode("\t", trim($output));
+        $this->assertSame('env=prod x=1', $parts[3]);
     }
 
     /** @return array<string, mixed> the context object of a json-format log line */
