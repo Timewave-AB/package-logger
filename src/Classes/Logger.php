@@ -8,6 +8,9 @@ use Timewave\Logger\Enums\LogLevel;
 
 class Logger implements LoggerInterface
 {
+    /** @var array<string, true> */
+    private static array $deprecationsWarned = [];
+
     /** @var array<string, mixed> */
     private array $context;
 
@@ -63,10 +66,10 @@ class Logger implements LoggerInterface
         $this->logFormat = LogFormat::tryFrom($logFormat) ?? LogFormat::text();
     }
 
-    /** @param array<string, mixed> $context merged over the standing context */
+    /** @param array<string, mixed> $context */
     public function addContext(array $context): void
     {
-        $this->context = array_merge($this->context, $context);
+        $this->context = array_replace($this->context, $context);
     }
 
     /** @param array<string, mixed> $context */
@@ -84,29 +87,24 @@ class Logger implements LoggerInterface
     }
 
     /**
-     * A child inherits a snapshot of this logger's standing context; later
-     * changes on either side stay local.
+     * Opens a child span and returns a logger for it. The child inherits a
+     * snapshot of this logger's standing context; the caller ends the span.
      *
-     * @param array<string, mixed>|null $context merged over the inherited context
+     * @param array<string, mixed>|null $context log context, merged over the inherited context
+     * @param array<string, scalar|\Stringable|null>|null $spanAttributes set on the span, not on log lines
      */
-    public function createChild(?array $context = null): Logger
-    {
-        return $this->copyWith($this->span, array_merge($this->context, $context ?? []));
-    }
-
-    /** @param array<string, scalar|\Stringable|null>|null $context span attributes (key => stringable value) */
-    public function createSpanLogger(string $name, ?array $context = null): Logger
+    public function createChildSpan(string $name, ?array $context = null, ?array $spanAttributes = null): Logger
     {
         $span = new Span(
             $name,
             $this->serviceName,
-            $context,
+            $spanAttributes,
             $this->span !== null ? $this->span->id : null,
             $this->otlpSender,
             $this->span !== null ? $this->span->traceId : null
         );
 
-        return $this->copyWith($span, $this->context);
+        return $this->copyWith($span, array_replace($this->context, $context ?? []));
     }
 
     /**
@@ -114,6 +112,42 @@ class Logger implements LoggerInterface
      * proxy's trace. A missing or malformed header falls back to a fresh trace
      * without throwing.
      *
+     * @param array<string, mixed>|null $context log context, merged over the inherited context
+     * @param array<string, scalar|\Stringable|null>|null $spanAttributes set on the span, not on log lines
+     */
+    public function createRootSpanFromTraceparent(
+        string $name,
+        ?string $traceparent = null,
+        ?array $context = null,
+        ?array $spanAttributes = null
+    ): Logger {
+        $parsed = self::parseTraceparent($traceparent);
+
+        $span = new Span(
+            $name,
+            $this->serviceName,
+            $spanAttributes,
+            $parsed['spanId'] ?? null,
+            $this->otlpSender,
+            $parsed['traceId'] ?? null
+        );
+
+        return $this->copyWith($span, array_replace($this->context, $context ?? []));
+    }
+
+    /**
+     * @deprecated Use createChildSpan(); the second argument is span attributes there too.
+     * @param array<string, scalar|\Stringable|null>|null $context span attributes (key => stringable value)
+     */
+    public function createSpanLogger(string $name, ?array $context = null): Logger
+    {
+        self::warnDeprecated(__FUNCTION__, 'createChildSpan');
+
+        return $this->createChildSpan($name, null, $context);
+    }
+
+    /**
+     * @deprecated Use createRootSpanFromTraceparent().
      * @param array<string, scalar|\Stringable|null>|null $context span attributes (key => stringable value)
      */
     public function createSpanLoggerFromTraceparent(
@@ -121,18 +155,9 @@ class Logger implements LoggerInterface
         ?string $traceparent = null,
         ?array $context = null
     ): Logger {
-        $parsed = self::parseTraceparent($traceparent);
+        self::warnDeprecated(__FUNCTION__, 'createRootSpanFromTraceparent');
 
-        $span = new Span(
-            $name,
-            $this->serviceName,
-            $context,
-            $parsed['spanId'] ?? null,
-            $this->otlpSender,
-            $parsed['traceId'] ?? null
-        );
-
-        return $this->copyWith($span, $this->context);
+        return $this->createRootSpanFromTraceparent($name, $traceparent, null, $context);
     }
 
     public function debug(string $message, ?array $context = null, ?\Throwable $exception = null): void
@@ -180,7 +205,7 @@ class Logger implements LoggerInterface
 
         $now = microtime(true);
         $timeUnixNano = (int) ($now * 1000000000);
-        $context = array_merge($this->context, $context ?? []);
+        $context = array_replace($this->context, $context ?? []);
 
         if ($this->otlpSender !== null) {
             $payload = OtlpLogRecord::build(
@@ -280,9 +305,43 @@ class Logger implements LoggerInterface
         $this->log(LogLevel::verbose(), $message, $context, $exception);
     }
 
+    /** Once per method per process: these sit on request paths, where per-call would mean thousands of lines. */
+    private static function warnDeprecated(string $method, string $replacement): void
+    {
+        if (isset(self::$deprecationsWarned[$method])) {
+            return;
+        }
+        self::$deprecationsWarned[$method] = true;
+
+        trigger_error(
+            "Timewave\\Logger: {$method}() is deprecated, use {$replacement}()",
+            E_USER_DEPRECATED
+        );
+    }
+
     public function warning(string $message, ?array $context = null, ?\Throwable $exception = null): void
     {
         $this->log(LogLevel::warning(), $message, $context, $exception);
+    }
+
+    /**
+     * Runs $body with a child-span logger and ends the span afterwards, including
+     * when $body throws. Returns whatever $body returns.
+     *
+     * @param array<string, mixed> $context log context, merged over the inherited context
+     * @param callable(Logger): mixed $body
+     * @param array<string, scalar|\Stringable|null>|null $spanAttributes set on the span, not on log lines
+     * @return mixed
+     */
+    public function withChildSpan(string $name, array $context, callable $body, ?array $spanAttributes = null)
+    {
+        $child = $this->createChildSpan($name, $context, $spanAttributes);
+
+        try {
+            return $body($child);
+        } finally {
+            $child->endSpan();
+        }
     }
 
     /**

@@ -36,57 +36,59 @@ $log->info('Something happened');           // env=prod requestId=Legodalf
 $log->info('And again', ['userId' => 42]);  // env=prod requestId=Legodalf userId=42
 ```
 
-`createChild()` returns a logger seeded with a copy of its parent's context, independent from then on. Set a parent's context before creating its children — context added afterwards reaches only the parent.
+On a key collision per-call context beats standing context, and an active span's `traceId`/`spanId` beat both. `getContext()` returns what a line from that logger carries, per-call context aside.
 
-```php
-$child = $log->createChild(['tenant' => 'acme']);
-$child->addContext(['job' => 'sync']);      // parent unaffected
-$child->removeContext('requestId');         // dropped from $child only
-```
+### Child spans
 
-On a key collision per-call context beats standing context, and an active span's `traceId`/`spanId` beat both. `getContext()` returns exactly what a line from that logger carries.
+Nesting a logger and opening a span are the same act: `createChildSpan()` opens a child span and returns a logger for it, seeded with a copy of the parent's standing context. Set a parent's context before creating its children — context added afterwards reaches only the parent.
 
-Span loggers inherit standing context the same way. The `$context` argument to `createSpanLogger()` is separate — it sets span attributes, as below.
-
-### Usage with spans
+Log context and span attributes are separate arguments: the second lands on every log line, the third only on the span in Tempo.
 
 ```php
 $log = new Logger('auth-4', 'debug', 'text', "\t", new OtlpSender('http://localhost:4318'));
 
-$requestSpanLog = $log->createSpanLogger('request', ['requestId' => 'Legodalf']);
+$request = $log->createChildSpan('request', ['requestId' => 'Legodalf'], ['http.method' => 'POST']);
+$request->verbose('Incoming request');
 
-$requestSpanLog->verbose('Incoming request', ['method' => 'POST', 'path' => '/auth/password']);
-
-$loginSpanLog = $requestSpanLog->createSpanLogger('login', ['username' => 'siv']);
-
-$loginSpanLog->info('User is trying to login');
-$userId = User::login('siv');
-$loginSpanLog->verbose('User is logged in');
+$login = $request->createChildSpan('login', ['username' => 'siv']);
+$login->info('User is trying to login');   // requestId=Legodalf username=siv traceId=… spanId=…
 
 // The underlying Span is reachable for callers that need the id or trace id
 // (e.g. to set on a response header):
-$traceId = $loginSpanLog->getSpan()->traceId;
+$traceId = $login->getSpan()->traceId;
 
-$loginSpanLog->endSpan();
-
-$requestSpanLog->debug('Request is over');
-
-$requestSpanLog->endSpan();
+$login->endSpan();
+$request->endSpan();
 ```
+
+`withChildSpan()` does the same but ends the span for you, including when the closure throws, and returns whatever the closure returns:
+
+```php
+$userId = $request->withChildSpan('login', ['username' => 'siv'], function (Logger $log) {
+    $log->info('User is trying to login');
+    return User::login('siv');
+});
+```
+
+A span that is never ended is still sent: `OtlpSender::flushAll()` closes any open span before draining, and a span dropped mid-request is closed by its destructor. A span closed that way reports a duration running to the moment it was collected rather than to the end of the work, and writes one stderr line naming it — so prefer `withChildSpan()`, or call `endSpan()` yourself, wherever the lifetime is yours to control.
 
 ### Linking to an incoming trace (`traceparent`)
 
 When a reverse-proxy (e.g. nginx `ngx_otel_module` with `otel_trace_context propagate`) injects a W3C `traceparent` header, root your request span on it so PHP spans join the proxy's trace instead of starting a detached one:
 
 ```php
-$requestSpanLog = $log->createSpanLoggerFromTraceparent(
+$request = $log->createRootSpanFromTraceparent(
     'request',
     $_SERVER['HTTP_TRACEPARENT'] ?? null,
     ['requestId' => 'Legodalf']
 );
 ```
 
-The header (`version-traceId-spanId-flags`) is parsed and validated (32-hex trace-id, 16-hex span-id, both non-zero). On a valid header the span adopts the incoming trace-id and uses the proxy's span-id as its parent. A missing or malformed header falls back to a fresh trace without throwing. Nested `createSpanLogger` calls inherit the parent's trace-id, so the whole request shares one trace.
+The header (`version-traceId-spanId-flags`) is parsed and validated (32-hex trace-id, 16-hex span-id, both non-zero). On a valid header the span adopts the incoming trace-id and uses the proxy's span-id as its parent. A missing or malformed header falls back to a fresh trace without throwing. Nested `createChildSpan` calls inherit the parent's trace-id, so the whole request shares one trace.
+
+### Deprecated methods
+
+`createSpanLogger()` and `createSpanLoggerFromTraceparent()` still work and delegate to `createChildSpan()` and `createRootSpanFromTraceparent()`. Their second/third `$context` argument keeps its old meaning of span attributes. Each writes one `E_USER_DEPRECATED` per process the first time it is called.
 
 ## Log levels
 
@@ -190,8 +192,10 @@ The webhook is already configured; this is only documented in case it needs re-c
 ### 0.7.0
 
 - Standing context on `Logger`: a last constructor argument plus `addContext()`, `removeContext()` and `getContext()`, merged into every stdout line and OTLP log record.
-- `createChild()` returns a logger seeded with a copy of its parent's context; span loggers inherit it the same way.
-- **Breaking:** `LoggerInterface` declares the four new methods, so anything implementing it directly must add them.
+- Nesting a logger and opening a span are now one act: `createChildSpan()` and `withChildSpan()` open a child span and carry a copy of the parent's standing context. Log context and span attributes are separate arguments.
+- `createSpanLogger()` → `createChildSpan()` and `createSpanLoggerFromTraceparent()` → `createRootSpanFromTraceparent()`. The old names still work, delegate, and warn once per process with `E_USER_DEPRECATED`.
+- A span that is never ended is now sent instead of dropped: `OtlpSender::flushAll()` closes open spans before draining, and `Span::__destruct` closes one that dies mid-request.
+- **Breaking:** `LoggerInterface` declares the new methods, so anything implementing it directly must add them.
 
 ### 0.6.1
 - Fixed non-stringeable value error.

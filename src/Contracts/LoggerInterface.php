@@ -9,10 +9,23 @@ interface LoggerInterface
 {
     public function addContext(array $context): void;
 
-    public function createChild(?array $context = null): LoggerInterface;
+    public function createChildSpan(
+        string $name,
+        ?array $context = null,
+        ?array $spanAttributes = null
+    ): LoggerInterface;
 
+    public function createRootSpanFromTraceparent(
+        string $name,
+        ?string $traceparent = null,
+        ?array $context = null,
+        ?array $spanAttributes = null
+    ): LoggerInterface;
+
+    /** @deprecated Use createChildSpan(). */
     public function createSpanLogger(string $name, ?array $context = null): LoggerInterface;
 
+    /** @deprecated Use createRootSpanFromTraceparent(). */
     public function createSpanLoggerFromTraceparent(
         string $name,
         ?string $traceparent = null,
@@ -43,4 +56,7 @@ interface LoggerInterface
     public function verbose(string $message, ?array $context = null, ?\Throwable $exception = null): void;
 
     public function warning(string $message, ?array $context = null, ?\Throwable $exception = null): void;
+
+    /** @return mixed */
+    public function withChildSpan(string $name, array $context, callable $body, ?array $spanAttributes = null);
 }

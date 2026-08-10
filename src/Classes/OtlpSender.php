@@ -36,6 +36,10 @@ class OtlpSender
 
     public static function flushAll(): void
     {
+        // Before draining: Span::end() queues, so a span closed after this
+        // point would never be sent.
+        Span::endAllOpen();
+
         foreach (array_keys(self::$sendersNeedingFlush) as $id) {
             if (isset(self::$sendersNeedingFlush[$id])) {
                 self::$sendersNeedingFlush[$id]->flush();
