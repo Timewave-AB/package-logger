@@ -277,4 +277,126 @@ class LoggerTest extends LoggerSubprocessTestCase
             $this->assertNull($span->parentId, "header: {$bad}");
         }
     }
+
+    public function testCreateChildInheritsAndMergesParentContext(): void
+    {
+        $log = new Logger('svc', 'debug', 'text', "\t", null, null, ['env' => 'prod', 'tenant' => 'acme']);
+        $child = $log->createChild(['tenant' => 'globex', 'job' => 'sync']);
+
+        $this->assertSame(['env' => 'prod', 'tenant' => 'globex', 'job' => 'sync'], $child->getContext());
+    }
+
+    public function testCreateChildSnapshotsContextAtCreation(): void
+    {
+        // Copy, not a live link: neither side sees the other's later edits.
+        $log = new Logger('svc', 'debug', 'text', "\t", null, null, ['env' => 'prod']);
+        $child = $log->createChild(['tenant' => 'acme']);
+
+        $log->addContext(['region' => 'eu']);
+        $child->addContext(['job' => 'sync']);
+
+        $this->assertSame(['env' => 'prod', 'region' => 'eu'], $log->getContext());
+        $this->assertSame(['env' => 'prod', 'tenant' => 'acme', 'job' => 'sync'], $child->getContext());
+    }
+
+    public function testGrandchildInheritsThroughItsParent(): void
+    {
+        $log = new Logger('svc');
+        $grandchild = $log->createChild(['a' => 1])->createChild();
+
+        $this->assertSame(['a' => 1], $grandchild->getContext());
+    }
+
+    public function testRemoveContextAffectsOnlyTheLoggerItIsCalledOn(): void
+    {
+        $log = new Logger('svc', 'debug', 'text', "\t", null, null, ['env' => 'prod', 'pii' => 'secret']);
+        $child = $log->createChild();
+
+        $child->removeContext('pii');
+
+        $this->assertSame(['env' => 'prod'], $child->getContext());
+        $this->assertSame(['env' => 'prod', 'pii' => 'secret'], $log->getContext());
+    }
+
+    public function testAddContextReplacesArrayValuesWholesale(): void
+    {
+        $log = new Logger('svc', 'debug', 'text', "\t", null, null, ['user' => ['id' => 1, 'name' => 'siv']]);
+        $log->addContext(['user' => ['id' => 2]]);
+
+        $this->assertSame(['user' => ['id' => 2]], $log->getContext());
+    }
+
+    public function testCreateChildKeepsParentSpanAndStandingContext(): void
+    {
+        $log = new Logger('svc', 'debug', 'text', "\t", null, null, ['env' => 'prod']);
+        $spanLog = $log->createSpanLogger('op');
+        $child = $spanLog->createChild(['step' => 'two']);
+
+        $span = $spanLog->getSpan();
+        $this->assertNotNull($span);
+        $this->assertSame($span, $child->getSpan());
+        $this->assertSame(
+            ['env' => 'prod', 'step' => 'two', 'traceId' => $span->traceId, 'spanId' => $span->id],
+            $child->getContext()
+        );
+    }
+
+    public function testLoggerInterfaceDeclaresContextMethods(): void
+    {
+        foreach (['addContext', 'createChild', 'getContext', 'removeContext'] as $method) {
+            $this->assertTrue(method_exists(LoggerInterface::class, $method), "missing: {$method}");
+        }
+    }
+
+    public function testStandingContextIsEmittedAndLosesToPerCallKeys(): void
+    {
+        $output = $this->runLoggerScript("
+            \$log = new Timewave\\Logger\\Classes\\Logger('svc', 'debug', 'json', \"\\t\", null, null, ['env' => 'prod', 'tenant' => 'acme']);
+            \$log->info('one');
+            \$log->info('two', ['tenant' => 'globex', 'x' => 1]);
+        ");
+
+        $lines = $this->nonEmptyLines($output);
+        $this->assertCount(2, $lines);
+        $this->assertSame(['env' => 'prod', 'tenant' => 'acme'], $this->jsonContext($lines[0]));
+        $this->assertSame(['env' => 'prod', 'tenant' => 'globex', 'x' => 1], $this->jsonContext($lines[1]));
+    }
+
+    public function testCreateChildInheritsLevelAndFormat(): void
+    {
+        $output = $this->runLoggerScript("
+            \$log = new Timewave\\Logger\\Classes\\Logger('svc', 'warning', 'json');
+            \$child = \$log->createChild(['tenant' => 'acme']);
+            \$child->info('filtered');
+            \$child->warning('kept');
+        ");
+
+        $lines = $this->nonEmptyLines($output);
+        $this->assertCount(1, $lines);
+
+        $decoded = json_decode($lines[0], true);
+        $this->assertSame('WARNING', $decoded['level']);
+        $this->assertSame(['tenant' => 'acme'], $decoded['context']);
+    }
+
+    public function testActiveSpanIdsOverrideContextKeysOfTheSameName(): void
+    {
+        $output = $this->runLoggerScript("
+            \$log = new Timewave\\Logger\\Classes\\Logger('svc', 'debug', 'json', \"\\t\", null, null, ['traceId' => 'mine']);
+            \$log->createSpanLogger('op')->info('in span', ['spanId' => 'also mine']);
+        ");
+
+        $context = $this->jsonContext(trim($output));
+        $this->assertMatchesRegularExpression('/^[0-9a-f]{32}$/', $context['traceId']);
+        $this->assertMatchesRegularExpression('/^[0-9a-f]{16}$/', $context['spanId']);
+    }
+
+    /** @return array<string, mixed> the context object of a json-format log line */
+    private function jsonContext(string $line): array
+    {
+        $decoded = json_decode($line, true);
+        $this->assertIsArray($decoded, "line was not valid JSON: {$line}");
+
+        return $decoded['context'] ?? [];
+    }
 }

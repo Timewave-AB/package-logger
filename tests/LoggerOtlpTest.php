@@ -40,4 +40,23 @@ class LoggerOtlpTest extends OtlpHttpServerTestCase
         $this->assertGreaterThanOrEqual($beforeNs, $emitted, 'timeUnixNano predates the call');
         $this->assertLessThanOrEqual($afterNs, $emitted, 'timeUnixNano is after the call returned — likely wrong unit');
     }
+
+    public function testStandingContextShipsAsOtlpAttributes(): void
+    {
+        $sender = new OtlpSender($this->otlpHost());
+        $log = new Logger('svc', 'debug', 'text', "\t", $sender, null, ['env' => 'prod']);
+        $log->createChild(['tenant' => 'acme'])->info('hello', ['x' => 1]);
+        OtlpSender::flushAll();
+
+        $requests = $this->waitForRequests(1);
+        $decoded = json_decode($requests[0]['body'], true);
+        $this->assertIsArray($decoded, 'OTLP body was not valid JSON');
+
+        $emitted = [];
+        foreach ($decoded['resourceLogs'][0]['scopeLogs'][0]['logRecords'][0]['attributes'] as $attribute) {
+            $emitted[$attribute['key']] = $attribute['value']['stringValue'];
+        }
+
+        $this->assertSame(['env' => 'prod', 'tenant' => 'acme', 'x' => '1'], $emitted);
+    }
 }
