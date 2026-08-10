@@ -8,33 +8,39 @@ use Timewave\Logger\Enums\LogLevel;
 
 class Logger implements LoggerInterface
 {
-    public string $serviceName;
-
-    public string $logFormatTextDelimiter;
-
-    private ?OtlpSender $otlpSender;
+    /** @var array<string, mixed> */
+    private array $context;
 
     private LogFormat $logFormat;
 
+    public string $logFormatTextDelimiter;
+
     private LogLevel $logLevel;
+
+    private ?OtlpSender $otlpSender;
+
+    public string $serviceName;
 
     private ?Span $span;
 
     /** @var resource|null */
     private $stdoutHandle = null;
 
+    /** @param array<string, mixed>|null $context standing context added to every log line */
     public function __construct(
         string $serviceName = 'my-app-logger',
         string $logLevel = 'debug',
         string $logFormat = LogFormat::TEXT,
         string $logFormatTextDelimiter = "\t",
         ?OtlpSender $otlpSender = null,
-        ?Span $span = null
+        ?Span $span = null,
+        ?array $context = null
     ) {
         $this->serviceName = $serviceName;
         $this->logFormatTextDelimiter = $logFormatTextDelimiter;
         $this->otlpSender = $otlpSender;
         $this->span = $span;
+        $this->context = $context ?? [];
 
         switch (strtoupper($logLevel)) {
             case 'ERROR':
@@ -57,29 +63,35 @@ class Logger implements LoggerInterface
         $this->logFormat = LogFormat::tryFrom($logFormat) ?? LogFormat::text();
     }
 
-    public function debug(string $message, ?array $context = null, ?\Throwable $exception = null): void
+    /** @param array<string, mixed> $context merged over the standing context */
+    public function addContext(array $context): void
     {
-        $this->log(LogLevel::debug(), $message, $context, $exception);
+        $this->context = array_merge($this->context, $context);
     }
 
-    public function verbose(string $message, ?array $context = null, ?\Throwable $exception = null): void
+    /** @param array<string, mixed> $context */
+    private function copyWith(?Span $span, array $context): Logger
     {
-        $this->log(LogLevel::verbose(), $message, $context, $exception);
+        return new Logger(
+            $this->serviceName,
+            $this->logLevel->name,
+            $this->logFormat->value,
+            $this->logFormatTextDelimiter,
+            $this->otlpSender,
+            $span,
+            $context
+        );
     }
 
-    public function info(string $message, ?array $context = null, ?\Throwable $exception = null): void
+    /**
+     * A child inherits a snapshot of this logger's standing context; later
+     * changes on either side stay local.
+     *
+     * @param array<string, mixed>|null $context merged over the inherited context
+     */
+    public function createChild(?array $context = null): Logger
     {
-        $this->log(LogLevel::info(), $message, $context, $exception);
-    }
-
-    public function warning(string $message, ?array $context = null, ?\Throwable $exception = null): void
-    {
-        $this->log(LogLevel::warning(), $message, $context, $exception);
-    }
-
-    public function error(string $message, ?array $context = null, ?\Throwable $exception = null): void
-    {
-        $this->log(LogLevel::error(), $message, $context, $exception);
+        return $this->copyWith($this->span, array_merge($this->context, $context ?? []));
     }
 
     /** @param array<string, scalar|\Stringable|null>|null $context span attributes (key => stringable value) */
@@ -94,7 +106,7 @@ class Logger implements LoggerInterface
             $this->span !== null ? $this->span->traceId : null
         );
 
-        return $this->wrapSpan($span);
+        return $this->copyWith($span, $this->context);
     }
 
     /**
@@ -120,19 +132,84 @@ class Logger implements LoggerInterface
             $parsed['traceId'] ?? null
         );
 
-        return $this->wrapSpan($span);
+        return $this->copyWith($span, $this->context);
     }
 
-    private function wrapSpan(Span $span): Logger
+    public function debug(string $message, ?array $context = null, ?\Throwable $exception = null): void
     {
-        return new Logger(
-            $this->serviceName,
-            $this->logLevel->name,
-            $this->logFormat->value,
-            $this->logFormatTextDelimiter,
-            $this->otlpSender,
-            $span
-        );
+        $this->log(LogLevel::debug(), $message, $context, $exception);
+    }
+
+    public function endSpan(): void
+    {
+        if ($this->span !== null) {
+            $this->span->end();
+        }
+    }
+
+    public function error(string $message, ?array $context = null, ?\Throwable $exception = null): void
+    {
+        $this->log(LogLevel::error(), $message, $context, $exception);
+    }
+
+    /** @return array<string, mixed> what every log line from this logger carries, per-call context aside */
+    public function getContext(): array
+    {
+        return $this->withSpanIds($this->context);
+    }
+
+    public function getSpan(): ?Span
+    {
+        return $this->span;
+    }
+
+    public function info(string $message, ?array $context = null, ?\Throwable $exception = null): void
+    {
+        $this->log(LogLevel::info(), $message, $context, $exception);
+    }
+
+    public function log(
+        LogLevel $level,
+        string $message,
+        ?array $context = null,
+        ?\Throwable $exception = null
+    ): void {
+        if ($level->value > $this->logLevel->value) {
+            return;
+        }
+
+        $now = microtime(true);
+        $timeUnixNano = (int) ($now * 1000000000);
+        $context = array_merge($this->context, $context ?? []);
+
+        if ($this->otlpSender !== null) {
+            $payload = OtlpLogRecord::build(
+                $this->serviceName,
+                $timeUnixNano,
+                $level,
+                $message,
+                $context,
+                $exception,
+                $this->span
+            );
+            $this->otlpSender->http('/v1/logs', $payload);
+        }
+
+        $line = array_filter([
+            'level' => $level->name,
+            'datetime' => date('Y-m-d H:i:s', (int) $now),
+            'message' => $message,
+            'context' => $this->withSpanIds($context),
+            'exception' => $exception,
+        ]);
+
+        if ($this->logFormat->value === LogFormat::JSON) {
+            $outputStr = $this->toJson($line);
+        } else {
+            $outputStr = $this->toText($line);
+        }
+
+        $this->writeStdout($outputStr);
     }
 
     /**
@@ -173,73 +250,11 @@ class Logger implements LoggerInterface
         return ['traceId' => $traceId, 'spanId' => $spanId];
     }
 
-    public function endSpan(): void
+    public function removeContext(string ...$keys): void
     {
-        if ($this->span !== null) {
-            $this->span->end();
+        foreach ($keys as $key) {
+            unset($this->context[$key]);
         }
-    }
-
-    public function getSpan(): ?Span
-    {
-        return $this->span;
-    }
-
-    public function log(
-        LogLevel $level,
-        string $message,
-        ?array $context = null,
-        ?\Throwable $exception = null
-    ): void {
-        if ($level->value > $this->logLevel->value) {
-            return;
-        }
-
-        $now = microtime(true);
-        $timeUnixNano = (int) ($now * 1000000000);
-
-        if ($this->otlpSender !== null) {
-            $payload = OtlpLogRecord::build(
-                $this->serviceName,
-                $timeUnixNano,
-                $level,
-                $message,
-                $context,
-                $exception,
-                $this->span
-            );
-            $this->otlpSender->http('/v1/logs', $payload);
-        }
-
-        if ($this->span !== null) {
-            $context = $context ?? []; // null auto-vivify into array is deprecated on 8.1+
-            $context['traceId'] = $this->span->traceId;
-            $context['spanId'] = $this->span->id;
-        }
-
-        $line = array_filter([
-            'level' => $level->name,
-            'datetime' => date('Y-m-d H:i:s', (int) $now),
-            'message' => $message,
-            'context' => $context,
-            'exception' => $exception,
-        ]);
-
-        if ($this->logFormat->value === LogFormat::JSON) {
-            $outputStr = $this->toJson($line);
-        } else {
-            $outputStr = $this->toText($line);
-        }
-
-        $this->writeStdout($outputStr);
-    }
-
-    private function writeStdout(string $line): void
-    {
-        if ($this->stdoutHandle === null) {
-            $this->stdoutHandle = fopen('php://stdout', 'w');
-        }
-        fwrite($this->stdoutHandle, $line . "\n");
     }
 
     private function toJson(array $line): string
@@ -258,5 +273,39 @@ class Logger implements LoggerInterface
         }
 
         return implode($this->logFormatTextDelimiter, $line);
+    }
+
+    public function verbose(string $message, ?array $context = null, ?\Throwable $exception = null): void
+    {
+        $this->log(LogLevel::verbose(), $message, $context, $exception);
+    }
+
+    public function warning(string $message, ?array $context = null, ?\Throwable $exception = null): void
+    {
+        $this->log(LogLevel::warning(), $message, $context, $exception);
+    }
+
+    /**
+     * @param array<string, mixed> $context
+     * @return array<string, mixed>
+     */
+    private function withSpanIds(array $context): array
+    {
+        if ($this->span === null) {
+            return $context;
+        }
+
+        $context['traceId'] = $this->span->traceId;
+        $context['spanId'] = $this->span->id;
+
+        return $context;
+    }
+
+    private function writeStdout(string $line): void
+    {
+        if ($this->stdoutHandle === null) {
+            $this->stdoutHandle = fopen('php://stdout', 'w');
+        }
+        fwrite($this->stdoutHandle, $line . "\n");
     }
 }

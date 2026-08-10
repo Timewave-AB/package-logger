@@ -24,6 +24,30 @@ $log->info('Something happened', ['key' => 'value']);
 
 If you don't pass an `OtlpSender`, the logger only writes to stdout — OTLP is opt-in by construction. Wiring is constructor-only; the sender cannot be swapped on a live logger.
 
+### Standing context
+
+A logger can carry context that rides along on every line it emits, so recurring fields don't have to be repeated per call. It reaches both stdout and the OTLP log record, exactly like per-call context.
+
+```php
+$log = new Logger('my-app-name', 'debug', 'text', "\t", null, null, ['env' => 'prod']);
+$log->addContext(['requestId' => 'Legodalf']);
+
+$log->info('Something happened');           // env=prod requestId=Legodalf
+$log->info('And again', ['userId' => 42]);  // env=prod requestId=Legodalf userId=42
+```
+
+`createChild()` returns a logger seeded with a copy of its parent's context, independent from then on. Set a parent's context before creating its children — context added afterwards reaches only the parent.
+
+```php
+$child = $log->createChild(['tenant' => 'acme']);
+$child->addContext(['job' => 'sync']);      // parent unaffected
+$child->removeContext('requestId');         // dropped from $child only
+```
+
+On a key collision per-call context beats standing context, and an active span's `traceId`/`spanId` beat both. `getContext()` returns exactly what a line from that logger carries.
+
+Span loggers inherit standing context the same way. The `$context` argument to `createSpanLogger()` is separate — it sets span attributes, as below.
+
 ### Usage with spans
 
 ```php
@@ -162,6 +186,12 @@ A GitHub webhook notifies Packagist on every push, so the new version appears wi
 The webhook is already configured; this is only documented in case it needs re-creating (repo → Settings → Webhooks): payload URL `https://packagist.org/api/github?username=timewave`, content type `application/json`, secret = the `timewave` Packagist account's API token, subscribed to the `push` event.
 
 ## Changelog
+
+### 0.7.0
+
+- Standing context on `Logger`: a last constructor argument plus `addContext()`, `removeContext()` and `getContext()`, merged into every stdout line and OTLP log record.
+- `createChild()` returns a logger seeded with a copy of its parent's context; span loggers inherit it the same way.
+- **Breaking:** `LoggerInterface` declares the four new methods, so anything implementing it directly must add them.
 
 ### 0.6.1
 - Fixed non-stringeable value error.
