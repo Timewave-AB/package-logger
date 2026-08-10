@@ -94,13 +94,11 @@ class LoggerTest extends LoggerSubprocessTestCase
 
     public function testCreateSpanLoggerInheritsConfigAndAttachesSpan(): void
     {
-        // The ['k' => 'v'] context passed to createSpanLogger is attached to
-        // the Span itself (and emitted to OTLP). It is NOT forwarded to log
-        // lines from the child logger — log() only injects traceId/spanId
-        // into the context column when a span is present.
+        // Third argument is span attributes: it reaches the Span (and OTLP
+        // traces) but never the log lines. Log context is the second argument.
         $output = $this->runLoggerScript("
             \$log = new Timewave\\Logger\\Classes\\Logger('svc');
-            \$child = \$log->createSpanLogger('op', ['k' => 'v']);
+            \$child = \$log->createChildSpan('op', null, ['k' => 'v']);
             \$child->info('inside span');
         ");
 
@@ -126,14 +124,14 @@ class LoggerTest extends LoggerSubprocessTestCase
 
     public function testCreateSpanLoggerInheritsJsonFormat(): void
     {
-        // Regression: createSpanLogger previously passed $this->logFormat->name
+        // Regression: createChildSpan previously passed $this->logFormat->name
         // ('JSON') to the new Logger, but the constructor's LogFormat::tryFrom
         // is case-sensitive on lowercase backing values, so the child silently
         // fell back to TEXT. Now it passes ->value ('json') and the format is
         // preserved.
         $output = $this->runLoggerScript("
             \$log = new Timewave\\Logger\\Classes\\Logger('svc', 'debug', 'json');
-            \$child = \$log->createSpanLogger('op');
+            \$child = \$log->createChildSpan('op');
             \$child->info('inside span');
         ");
 
@@ -165,12 +163,12 @@ class LoggerTest extends LoggerSubprocessTestCase
 
     public function testCreateSpanLoggerExposesUnderlyingSpan(): void
     {
-        // The convenience+composition story: createSpanLogger returns a logger
+        // The convenience+composition story: createChildSpan returns a logger
         // wired to a span so calls just work, AND that same span is reachable
         // via getSpan() so callers can read traceId/spanId/attributes without
         // tracking it separately.
         $log = new Logger('svc');
-        $child = $log->createSpanLogger('op', ['k' => 'v']);
+        $child = $log->createChildSpan('op', null, ['k' => 'v']);
 
         $span = $child->getSpan();
         $this->assertInstanceOf(Span::class, $span);
@@ -182,8 +180,8 @@ class LoggerTest extends LoggerSubprocessTestCase
     public function testNestedSpanLoggerLinksToParentSpanId(): void
     {
         $log = new Logger('svc');
-        $outer = $log->createSpanLogger('outer');
-        $inner = $outer->createSpanLogger('inner');
+        $outer = $log->createChildSpan('outer');
+        $inner = $outer->createChildSpan('inner');
 
         $outerSpan = $outer->getSpan();
         $innerSpan = $inner->getSpan();
@@ -196,8 +194,8 @@ class LoggerTest extends LoggerSubprocessTestCase
     public function testNestedSpanLoggerInheritsParentTraceId(): void
     {
         $log = new Logger('svc');
-        $outer = $log->createSpanLogger('outer');
-        $inner = $outer->createSpanLogger('inner');
+        $outer = $log->createChildSpan('outer');
+        $inner = $outer->createChildSpan('inner');
 
         $outerSpan = $outer->getSpan();
         $innerSpan = $inner->getSpan();
@@ -212,7 +210,7 @@ class LoggerTest extends LoggerSubprocessTestCase
         $parentSpanId = bin2hex(random_bytes(8));
 
         $log = new Logger('svc');
-        $root = $log->createSpanLoggerFromTraceparent('request', "00-{$traceId}-{$parentSpanId}-01");
+        $root = $log->createRootSpanFromTraceparent('request', "00-{$traceId}-{$parentSpanId}-01");
 
         $span = $root->getSpan();
         $this->assertNotNull($span);
@@ -225,8 +223,8 @@ class LoggerTest extends LoggerSubprocessTestCase
         $traceId = bin2hex(random_bytes(16));
 
         $log = new Logger('svc');
-        $root = $log->createSpanLoggerFromTraceparent('request', "00-{$traceId}-" . bin2hex(random_bytes(8)) . '-01');
-        $child = $root->createSpanLogger('login');
+        $root = $log->createRootSpanFromTraceparent('request', "00-{$traceId}-" . bin2hex(random_bytes(8)) . '-01');
+        $child = $root->createChildSpan('login');
 
         $rootSpan = $root->getSpan();
         $childSpan = $child->getSpan();
@@ -239,7 +237,7 @@ class LoggerTest extends LoggerSubprocessTestCase
     public function testCreateSpanLoggerFromTraceparentFallsBackOnMissingHeader(): void
     {
         $log = new Logger('svc');
-        $root = $log->createSpanLoggerFromTraceparent('request', null);
+        $root = $log->createRootSpanFromTraceparent('request', null);
 
         $span = $root->getSpan();
         $this->assertNotNull($span);
@@ -249,7 +247,7 @@ class LoggerTest extends LoggerSubprocessTestCase
 
     public function testLoggerInterfaceDeclaresCreateSpanLoggerFromTraceparent(): void
     {
-        $this->assertTrue(method_exists(LoggerInterface::class, 'createSpanLoggerFromTraceparent'));
+        $this->assertTrue(method_exists(LoggerInterface::class, 'createRootSpanFromTraceparent'));
     }
 
     public function testCreateSpanLoggerFromTraceparentFallsBackOnInvalidHeader(): void
@@ -271,49 +269,55 @@ class LoggerTest extends LoggerSubprocessTestCase
 
         $log = new Logger('svc');
         foreach ($headers as $bad) {
-            $span = $log->createSpanLoggerFromTraceparent('request', $bad)->getSpan();
+            $span = $log->createRootSpanFromTraceparent('request', $bad)->getSpan();
             $this->assertNotNull($span, "header: {$bad}");
             $this->assertMatchesRegularExpression('/^[0-9a-f]{32}$/', $span->traceId, "header: {$bad}");
             $this->assertNull($span->parentId, "header: {$bad}");
         }
     }
 
-    public function testCreateChildInheritsAndMergesParentContext(): void
+    public function testCreateChildSpanInheritsAndMergesParentContext(): void
     {
         $log = new Logger('svc', 'debug', 'text', "\t", null, null, ['env' => 'prod', 'tenant' => 'acme']);
-        $child = $log->createChild(['tenant' => 'globex', 'job' => 'sync']);
+        $child = $log->createChildSpan('op', ['tenant' => 'globex', 'job' => 'sync']);
 
-        $this->assertSame(['env' => 'prod', 'tenant' => 'globex', 'job' => 'sync'], $child->getContext());
+        $this->assertSame(
+            ['env' => 'prod', 'tenant' => 'globex', 'job' => 'sync'],
+            $this->standingContext($child)
+        );
     }
 
-    public function testCreateChildSnapshotsContextAtCreation(): void
+    public function testCreateChildSpanSnapshotsContextAtCreation(): void
     {
         $log = new Logger('svc', 'debug', 'text', "\t", null, null, ['env' => 'prod']);
-        $child = $log->createChild(['tenant' => 'acme']);
+        $child = $log->createChildSpan('op', ['tenant' => 'acme']);
 
         $log->addContext(['region' => 'eu']);
         $child->addContext(['job' => 'sync']);
 
         $this->assertSame(['env' => 'prod', 'region' => 'eu'], $log->getContext());
-        $this->assertSame(['env' => 'prod', 'tenant' => 'acme', 'job' => 'sync'], $child->getContext());
+        $this->assertSame(
+            ['env' => 'prod', 'tenant' => 'acme', 'job' => 'sync'],
+            $this->standingContext($child)
+        );
     }
 
-    public function testGrandchildInheritsThroughItsParent(): void
+    public function testGrandchildSpanInheritsThroughItsParent(): void
     {
         $log = new Logger('svc');
-        $grandchild = $log->createChild(['a' => 1])->createChild();
+        $grandchild = $log->createChildSpan('outer', ['a' => 1])->createChildSpan('inner');
 
-        $this->assertSame(['a' => 1], $grandchild->getContext());
+        $this->assertSame(['a' => 1], $this->standingContext($grandchild));
     }
 
     public function testRemoveContextAffectsOnlyTheLoggerItIsCalledOn(): void
     {
         $log = new Logger('svc', 'debug', 'text', "\t", null, null, ['env' => 'prod', 'pii' => 'secret']);
-        $child = $log->createChild();
+        $child = $log->createChildSpan('op');
 
         $child->removeContext('pii');
 
-        $this->assertSame(['env' => 'prod'], $child->getContext());
+        $this->assertSame(['env' => 'prod'], $this->standingContext($child));
         $this->assertSame(['env' => 'prod', 'pii' => 'secret'], $log->getContext());
     }
 
@@ -325,24 +329,78 @@ class LoggerTest extends LoggerSubprocessTestCase
         $this->assertSame(['user' => ['id' => 2]], $log->getContext());
     }
 
-    public function testCreateChildKeepsParentSpanAndStandingContext(): void
+    public function testCreateChildSpanSeparatesLogContextFromSpanAttributes(): void
+    {
+        $log = new Logger('svc');
+        $child = $log->createChildSpan('op', ['tenant' => 'acme'], ['http.method' => 'POST']);
+
+        $span = $child->getSpan();
+        $this->assertNotNull($span);
+        $this->assertSame(['http.method' => 'POST'], $span->context);
+        $this->assertSame(['tenant' => 'acme'], $this->standingContext($child));
+    }
+
+    public function testGetContextIncludesActiveSpanIds(): void
     {
         $log = new Logger('svc', 'debug', 'text', "\t", null, null, ['env' => 'prod']);
-        $spanLog = $log->createSpanLogger('op');
-        $child = $spanLog->createChild(['step' => 'two']);
+        $child = $log->createChildSpan('op');
 
-        $span = $spanLog->getSpan();
+        $span = $child->getSpan();
         $this->assertNotNull($span);
-        $this->assertSame($span, $child->getSpan());
         $this->assertSame(
-            ['env' => 'prod', 'step' => 'two', 'traceId' => $span->traceId, 'spanId' => $span->id],
+            ['env' => 'prod', 'traceId' => $span->traceId, 'spanId' => $span->id],
             $child->getContext()
         );
     }
 
-    public function testLoggerInterfaceDeclaresContextMethods(): void
+    public function testWithChildSpanEndsTheSpanAndReturnsTheClosureValue(): void
     {
-        foreach (['addContext', 'createChild', 'getContext', 'removeContext'] as $method) {
+        $log = new Logger('svc', 'debug', 'text', "\t", null, null, ['env' => 'prod']);
+
+        $inner = null;
+        $result = $log->withChildSpan('op', ['tenant' => 'acme'], function (Logger $child) use (&$inner) {
+            $inner = $child;
+            return 'returned';
+        });
+
+        $this->assertSame('returned', $result);
+        $this->assertSame(['env' => 'prod', 'tenant' => 'acme'], $this->standingContext($inner));
+        $this->assertTrue($inner->getSpan()->hasEnded());
+    }
+
+    public function testWithChildSpanEndsTheSpanWhenTheClosureThrows(): void
+    {
+        $log = new Logger('svc');
+
+        $inner = null;
+        try {
+            $log->withChildSpan('op', [], function (Logger $child) use (&$inner) {
+                $inner = $child;
+                throw new \RuntimeException('boom');
+            });
+            $this->fail('withChildSpan swallowed the exception');
+        } catch (\RuntimeException $exception) {
+            $this->assertSame('boom', $exception->getMessage());
+        }
+
+        $this->assertNotNull($inner);
+        $this->assertTrue($inner->getSpan()->hasEnded());
+    }
+
+    public function testLoggerInterfaceDeclaresContextAndSpanMethods(): void
+    {
+        $methods = [
+            'addContext',
+            'createChildSpan',
+            'createRootSpanFromTraceparent',
+            'createSpanLogger',
+            'createSpanLoggerFromTraceparent',
+            'getContext',
+            'removeContext',
+            'withChildSpan',
+        ];
+
+        foreach ($methods as $method) {
             $this->assertTrue(method_exists(LoggerInterface::class, $method), "missing: {$method}");
         }
     }
@@ -361,11 +419,11 @@ class LoggerTest extends LoggerSubprocessTestCase
         $this->assertSame(['env' => 'prod', 'tenant' => 'globex', 'x' => 1], $this->jsonContext($lines[1]));
     }
 
-    public function testCreateChildInheritsLevelAndFormat(): void
+    public function testCreateChildSpanInheritsLevelAndFormat(): void
     {
         $output = $this->runLoggerScript("
             \$log = new Timewave\\Logger\\Classes\\Logger('svc', 'warning', 'json');
-            \$child = \$log->createChild(['tenant' => 'acme']);
+            \$child = \$log->createChildSpan('op', ['tenant' => 'acme']);
             \$child->info('filtered');
             \$child->warning('kept');
         ");
@@ -375,14 +433,17 @@ class LoggerTest extends LoggerSubprocessTestCase
 
         $decoded = json_decode($lines[0], true);
         $this->assertSame('WARNING', $decoded['level']);
-        $this->assertSame(['tenant' => 'acme'], $decoded['context']);
+
+        $context = $this->jsonContext($lines[0]);
+        unset($context['traceId'], $context['spanId']);
+        $this->assertSame(['tenant' => 'acme'], $context);
     }
 
     public function testActiveSpanIdsOverrideContextKeysOfTheSameName(): void
     {
         $output = $this->runLoggerScript("
             \$log = new Timewave\\Logger\\Classes\\Logger('svc', 'debug', 'json', \"\\t\", null, null, ['traceId' => 'mine']);
-            \$log->createSpanLogger('op')->info('in span', ['spanId' => 'also mine']);
+            \$log->createChildSpan('op')->info('in span', ['spanId' => 'also mine']);
         ");
 
         $context = $this->jsonContext(trim($output));
@@ -421,6 +482,67 @@ class LoggerTest extends LoggerSubprocessTestCase
 
         $parts = explode("\t", trim($output));
         $this->assertSame('env=prod x=1', $parts[3]);
+    }
+
+    public function testDeprecatedCreateSpanLoggerDelegatesAndWarnsOnce(): void
+    {
+        // A subprocess gives a fresh process, so the once-per-process guard is
+        // observable. The error handler makes the assertion independent of the
+        // ini defaults, which differ between 7.4 and 8.x.
+        $output = $this->runLoggerScript("
+            set_error_handler(function (\$errno, \$errstr) {
+                if (\$errno === E_USER_DEPRECATED) { echo 'DEPRECATED: ' . \$errstr . \"\\n\"; }
+                return true;
+            });
+            \$log = new Timewave\\Logger\\Classes\\Logger('svc', 'debug', 'json');
+            \$first = \$log->createSpanLogger('op', ['k' => 'v']);
+            \$log->createSpanLogger('op2');
+            echo json_encode(\$first->getSpan()->context) . \"\\n\";
+        ");
+
+        $lines = $this->nonEmptyLines($output);
+        $deprecations = array_values(array_filter($lines, static function (string $line): bool {
+            return strpos($line, 'DEPRECATED: ') === 0;
+        }));
+
+        $this->assertCount(1, $deprecations, "expected exactly one warning, got: {$output}");
+        $this->assertStringContainsString('createSpanLogger', $deprecations[0]);
+        $this->assertStringContainsString('createChildSpan', $deprecations[0]);
+        // The old second argument meant span attributes; it must not silently
+        // become log context on the way through.
+        $this->assertContains('{"k":"v"}', $lines);
+    }
+
+    public function testDeprecatedCreateSpanLoggerFromTraceparentDelegates(): void
+    {
+        $traceId = bin2hex(random_bytes(16));
+        $parentSpanId = bin2hex(random_bytes(8));
+
+        $output = $this->runLoggerScript("
+            set_error_handler(function (\$errno, \$errstr) {
+                if (\$errno === E_USER_DEPRECATED) { echo 'DEPRECATED: ' . \$errstr . \"\\n\"; }
+                return true;
+            });
+            \$log = new Timewave\\Logger\\Classes\\Logger('svc', 'debug', 'json');
+            \$root = \$log->createSpanLoggerFromTraceparent('request', '00-{$traceId}-{$parentSpanId}-01', ['k' => 'v']);
+            \$span = \$root->getSpan();
+            echo \$span->traceId . ' ' . \$span->parentId . ' ' . json_encode(\$span->context) . \"\\n\";
+        ");
+
+        $lines = $this->nonEmptyLines($output);
+        $this->assertContains("{$traceId} {$parentSpanId} {\"k\":\"v\"}", $lines);
+        $this->assertNotEmpty(array_filter($lines, static function (string $line): bool {
+            return strpos($line, 'DEPRECATED: ') === 0;
+        }));
+    }
+
+    /** @return array<string, mixed> resolved context without the span ids log() injects */
+    private function standingContext(Logger $log): array
+    {
+        $context = $log->getContext();
+        unset($context['traceId'], $context['spanId']);
+
+        return $context;
     }
 
     /** @return array<string, mixed> the context object of a json-format log line */

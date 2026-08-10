@@ -45,11 +45,17 @@ class LoggerOtlpTest extends OtlpHttpServerTestCase
     {
         $sender = new OtlpSender($this->otlpHost());
         $log = new Logger('svc', 'debug', 'text', "\t", $sender, null, ['env' => 'prod']);
-        $log->createChild(['tenant' => 'acme'])->info('hello', ['x' => 1]);
+        $child = $log->createChildSpan('op', ['tenant' => 'acme']);
+        $child->info('hello', ['x' => 1]);
+        $child->endSpan();
         OtlpSender::flushAll();
 
-        $requests = $this->waitForRequests(1);
-        $decoded = json_decode($requests[0]['body'], true);
+        $logRequests = array_values(array_filter($this->waitForRequests(2), static function (array $request): bool {
+            return $request['path'] === '/v1/logs';
+        }));
+        $this->assertCount(1, $logRequests);
+
+        $decoded = json_decode($logRequests[0]['body'], true);
         $this->assertIsArray($decoded, 'OTLP body was not valid JSON');
 
         $emitted = [];
@@ -58,5 +64,36 @@ class LoggerOtlpTest extends OtlpHttpServerTestCase
         }
 
         $this->assertSame(['env' => 'prod', 'tenant' => 'acme', 'x' => '1'], $emitted);
+    }
+
+    public function testUnendedSpanIsSentWhenTheLoggerIsStillReferenced(): void
+    {
+        // The logger stays in scope, so no destructor runs. flushAll() has to
+        // close the span before draining or the payload is queued after the
+        // last drain and never leaves the process.
+        $sender = new OtlpSender($this->otlpHost());
+        $log = new Logger('svc', 'debug', 'text', "\t", $sender);
+        $held = $log->createChildSpan('forgotten');
+
+        OtlpSender::flushAll();
+
+        $requests = $this->waitForRequests(1);
+        $this->assertSame('/v1/traces', $requests[0]['path']);
+        $this->assertTrue($held->getSpan()->hasEnded());
+    }
+
+    public function testSpanEndsWhenItsLastReferenceGoesAway(): void
+    {
+        $sender = new OtlpSender($this->otlpHost());
+        $log = new Logger('svc', 'debug', 'text', "\t", $sender);
+
+        // Nothing may hold the Span here — a reference kept for assertions is
+        // itself enough to stop the destructor this test is about.
+        $child = $log->createChildSpan('scoped');
+        unset($child);
+
+        OtlpSender::flushAll();
+        $requests = $this->waitForRequests(1);
+        $this->assertSame('/v1/traces', $requests[0]['path']);
     }
 }
