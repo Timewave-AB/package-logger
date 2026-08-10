@@ -44,15 +44,9 @@ class OtlpLogRecord
 
         if ($context !== null) {
             foreach ($context as $key => $value) {
-                if (is_scalar($value) || (is_object($value) && method_exists($value, '__toString')) || is_null($value)) {
-                    $value = (string) $value;
-                } else {
-                    $value = 'Non-stringeable value';
-                }
-
                 $attributes[] = [
                     'key' => $key,
-                    'value' => ['stringValue' => $value],
+                    'value' => ['stringValue' => AttributeValue::stringify($value)],
                 ];
             }
         }
