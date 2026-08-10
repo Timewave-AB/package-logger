@@ -66,20 +66,42 @@ class LoggerOtlpTest extends OtlpHttpServerTestCase
         $this->assertSame(['env' => 'prod', 'tenant' => 'acme', 'x' => '1'], $emitted);
     }
 
-    public function testUnendedSpanIsSentWhenTheLoggerIsStillReferenced(): void
+    public function testUnendedSpanIsSentOnTheShutdownPath(): void
     {
-        // The logger stays in scope, so no destructor runs. flushAll() has to
-        // close the span before draining or the payload is queued after the
-        // last drain and never leaves the process.
+        // The logger stays in scope, so no destructor runs. The shutdown entry
+        // point has to close the span before draining, or the payload is queued
+        // after the last drain and never leaves the process.
         $sender = new OtlpSender($this->otlpHost());
         $log = new Logger('svc', 'debug', 'text', "\t", $sender);
         $held = $log->createChildSpan('forgotten');
 
-        OtlpSender::flushAll();
+        OtlpSender::endSpansAndFlushAll();
 
         $requests = $this->waitForRequests(1);
         $this->assertSame('/v1/traces', $requests[0]['path']);
         $this->assertTrue($held->getSpan()->hasEnded());
+    }
+
+    public function testExplicitFlushDoesNotTruncateASpanStillInFlight(): void
+    {
+        // Draining mid-request must not close live spans: the documented
+        // pre-fastcgi_finish_request() flush would otherwise cut every request
+        // span short and turn the later endSpan() into a no-op.
+        $sender = new OtlpSender($this->otlpHost());
+        $log = new Logger('svc', 'debug', 'text', "\t", $sender);
+        $request = $log->createChildSpan('request');
+        $request->info('work started');
+
+        OtlpSender::flushAll();
+
+        $this->assertFalse($request->getSpan()->hasEnded());
+
+        $request->endSpan();
+        OtlpSender::flushAll();
+
+        $paths = array_column($this->waitForRequests(2), 'path');
+        sort($paths);
+        $this->assertSame(['/v1/logs', '/v1/traces'], $paths);
     }
 
     public function testSpanEndsWhenItsLastReferenceGoesAway(): void

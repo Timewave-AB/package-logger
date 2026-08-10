@@ -92,7 +92,7 @@ class LoggerTest extends LoggerSubprocessTestCase
         $this->assertStringStartsWith('DEBUG', $lines[0]);
     }
 
-    public function testCreateSpanLoggerInheritsConfigAndAttachesSpan(): void
+    public function testCreateChildSpanInheritsConfigAndAttachesSpan(): void
     {
         // Third argument is span attributes: it reaches the Span (and OTLP
         // traces) but never the log lines. Log context is the second argument.
@@ -122,13 +122,8 @@ class LoggerTest extends LoggerSubprocessTestCase
         $this->assertNotSame($context['traceId'], $context['spanId']);
     }
 
-    public function testCreateSpanLoggerInheritsJsonFormat(): void
+    public function testCreateChildSpanInheritsJsonFormat(): void
     {
-        // Regression: createChildSpan previously passed $this->logFormat->name
-        // ('JSON') to the new Logger, but the constructor's LogFormat::tryFrom
-        // is case-sensitive on lowercase backing values, so the child silently
-        // fell back to TEXT. Now it passes ->value ('json') and the format is
-        // preserved.
         $output = $this->runLoggerScript("
             \$log = new Timewave\\Logger\\Classes\\Logger('svc', 'debug', 'json');
             \$child = \$log->createChildSpan('op');
@@ -161,7 +156,7 @@ class LoggerTest extends LoggerSubprocessTestCase
         $this->assertNull($log->getSpan());
     }
 
-    public function testCreateSpanLoggerExposesUnderlyingSpan(): void
+    public function testCreateChildSpanExposesUnderlyingSpan(): void
     {
         // The convenience+composition story: createChildSpan returns a logger
         // wired to a span so calls just work, AND that same span is reachable
@@ -177,7 +172,7 @@ class LoggerTest extends LoggerSubprocessTestCase
         $this->assertMatchesRegularExpression('/^[0-9a-f]{16}$/', $span->id);
     }
 
-    public function testNestedSpanLoggerLinksToParentSpanId(): void
+    public function testNestedChildSpanLinksToParentSpanId(): void
     {
         $log = new Logger('svc');
         $outer = $log->createChildSpan('outer');
@@ -191,7 +186,7 @@ class LoggerTest extends LoggerSubprocessTestCase
         $this->assertSame($outerSpan->id, $innerSpan->parentId);
     }
 
-    public function testNestedSpanLoggerInheritsParentTraceId(): void
+    public function testNestedChildSpanInheritsParentTraceId(): void
     {
         $log = new Logger('svc');
         $outer = $log->createChildSpan('outer');
@@ -204,7 +199,7 @@ class LoggerTest extends LoggerSubprocessTestCase
         $this->assertSame($outerSpan->traceId, $innerSpan->traceId);
     }
 
-    public function testCreateSpanLoggerFromTraceparentAdoptsTraceIdAndParentSpanId(): void
+    public function testCreateRootSpanFromTraceparentAdoptsTraceIdAndParentSpanId(): void
     {
         $traceId = bin2hex(random_bytes(16));
         $parentSpanId = bin2hex(random_bytes(8));
@@ -234,7 +229,7 @@ class LoggerTest extends LoggerSubprocessTestCase
         $this->assertSame($rootSpan->id, $childSpan->parentId);
     }
 
-    public function testCreateSpanLoggerFromTraceparentFallsBackOnMissingHeader(): void
+    public function testCreateRootSpanFromTraceparentFallsBackOnMissingHeader(): void
     {
         $log = new Logger('svc');
         $root = $log->createRootSpanFromTraceparent('request', null);
@@ -245,12 +240,7 @@ class LoggerTest extends LoggerSubprocessTestCase
         $this->assertNull($span->parentId);
     }
 
-    public function testLoggerInterfaceDeclaresCreateSpanLoggerFromTraceparent(): void
-    {
-        $this->assertTrue(method_exists(LoggerInterface::class, 'createRootSpanFromTraceparent'));
-    }
-
-    public function testCreateSpanLoggerFromTraceparentFallsBackOnInvalidHeader(): void
+    public function testCreateRootSpanFromTraceparentFallsBackOnInvalidHeader(): void
     {
         // trace/span are well-formed; only the version or field count is wrong,
         // so these probe the W3C-conformance guards rather than the hex checks.
@@ -497,6 +487,7 @@ class LoggerTest extends LoggerSubprocessTestCase
             \$log = new Timewave\\Logger\\Classes\\Logger('svc', 'debug', 'json');
             \$first = \$log->createSpanLogger('op', ['k' => 'v']);
             \$log->createSpanLogger('op2');
+            \$log->createSpanLoggerFromTraceparent('req');
             echo json_encode(\$first->getSpan()->context) . \"\\n\";
         ");
 
@@ -505,9 +496,12 @@ class LoggerTest extends LoggerSubprocessTestCase
             return strpos($line, 'DEPRECATED: ') === 0;
         }));
 
-        $this->assertCount(1, $deprecations, "expected exactly one warning, got: {$output}");
-        $this->assertStringContainsString('createSpanLogger', $deprecations[0]);
+        // Once per method, not once per process: two calls to one shim warn
+        // once, but the other shim still gets its own warning.
+        $this->assertCount(2, $deprecations, "expected one warning per method, got: {$output}");
+        $this->assertStringContainsString('createSpanLogger()', $deprecations[0]);
         $this->assertStringContainsString('createChildSpan', $deprecations[0]);
+        $this->assertStringContainsString('createSpanLoggerFromTraceparent()', $deprecations[1]);
         // The old second argument meant span attributes; it must not silently
         // become log context on the way through.
         $this->assertContains('{"k":"v"}', $lines);

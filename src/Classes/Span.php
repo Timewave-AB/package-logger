@@ -5,8 +5,7 @@ namespace Timewave\Logger\Classes;
 class Span
 {
     /**
-     * Weak so a registered span can still be refcounted away mid-request; a
-     * strong reference here would defer every destructor to process exit.
+     * Weak so a registered span can still be refcounted away mid-request.
      *
      * @var array<int, \WeakReference>
      */
@@ -122,11 +121,7 @@ class Span
         }
     }
 
-    /**
-     * Called from the flush path rather than a shutdown hook of its own: PHP
-     * runs shutdown functions before destructors, so a span closed any later
-     * would queue its payload after the final drain.
-     */
+    /** Must run before the final drain: end() enqueues, and nothing drains after it. */
     public static function endAllOpen(): void
     {
         foreach (array_keys(self::$openSpans) as $id) {
@@ -147,6 +142,12 @@ class Span
     public function hasEnded(): bool
     {
         return $this->ended;
+    }
+
+    /** @internal Test-only state reset. */
+    public static function resetForTesting(): void
+    {
+        self::$openSpans = [];
     }
 
     private function createSpanId(): string

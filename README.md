@@ -30,11 +30,12 @@ A logger can carry context that rides along on every line it emits, so recurring
 
 ```php
 $log = new Logger('my-app-name', 'debug', 'text', "\t", null, null, ['env' => 'prod']);
-$log->addContext(['requestId' => 'Legodalf']);
 
-$log->info('Something happened');           // env=prod requestId=Legodalf
-$log->info('And again', ['userId' => 42]);  // env=prod requestId=Legodalf userId=42
+$log->info('Something happened');           // env=prod
+$log->info('And again', ['userId' => 42]);  // env=prod userId=42
 ```
+
+`addContext()` mutates the logger in place. Keep it for values that hold for the whole process — under a long-running worker (Octane, RoadRunner, Swoole) a per-request value set this way outlives the request and misattributes later lines. Per-request values belong on a child span, which snapshots instead of mutating.
 
 On a key collision per-call context beats standing context, and an active span's `traceId`/`spanId` beat both. `getContext()` returns what a line from that logger carries, per-call context aside.
 
@@ -70,7 +71,9 @@ $userId = $request->withChildSpan('login', ['username' => 'siv'], function (Logg
 });
 ```
 
-A span that is never ended is still sent: `OtlpSender::flushAll()` closes any open span before draining, and a span dropped mid-request is closed by its destructor. A span closed that way reports a duration running to the moment it was collected rather than to the end of the work, and writes one stderr line naming it — so prefer `withChildSpan()`, or call `endSpan()` yourself, wherever the lifetime is yours to control.
+A span that is never ended is still sent: the shutdown hook closes any span left open before draining, and a span dropped mid-request is closed by its destructor. A span closed that way reports a duration running to the moment it was collected rather than to the end of the work, and writes one stderr line naming it — so prefer `withChildSpan()`, or call `endSpan()` yourself, wherever the lifetime is yours to control.
+
+An explicit `OtlpSender::flushAll()` only drains queues and leaves running spans alone, so it is safe to call mid-request.
 
 ### Linking to an incoming trace (`traceparent`)
 
@@ -124,7 +127,7 @@ Practical consequences:
 - **PHP-FPM**: call `OtlpSender::flushAll()` *before* `fastcgi_finish_request()` if you want OTLP delivered before the response goes out; otherwise the response ships first and the flush runs during worker idle time. `fastcgi_finish_request()` exists only in the FPM SAPI.
 - **Queue cap**: the queue is capped at `OtlpSender::MAX_QUEUE_SIZE` (10 000) items per sender. If the collector is dead and the queue fills, new entries are dropped and one `OTLP ERROR: queue full…` line is written to stdout until the queue drains.
 - **Hard process kill (SIGKILL, OOM-killer)**: the shutdown hook does not run, so in-flight items are lost. With a local collector this gap is small; if it matters to you, call `OtlpSender::flushAll()` at critical points.
-- **Forgotten `end()`**: a `Span` that is destroyed without `end()` is invisible to the collector. The destructor writes one stderr warning per dropped span (`Span 'name' destroyed without end() — span not POSTed to OTLP`) so the omission is observable.
+- **Forgotten `end()`**: the span is still sent, closed either by its destructor or by the shutdown hook, and one stderr line (`Span 'name' was not ended explicitly — ending it at destruction`) names it. A span opened *after* the shutdown hook has already drained — from another `register_shutdown_function`, say — is queued too late and lost.
 
 ### OTLP stopwatch (per-call latency)
 
@@ -194,7 +197,7 @@ The webhook is already configured; this is only documented in case it needs re-c
 - Standing context on `Logger`: a last constructor argument plus `addContext()`, `removeContext()` and `getContext()`, merged into every stdout line and OTLP log record.
 - Nesting a logger and opening a span are now one act: `createChildSpan()` and `withChildSpan()` open a child span and carry a copy of the parent's standing context. Log context and span attributes are separate arguments.
 - `createSpanLogger()` → `createChildSpan()` and `createSpanLoggerFromTraceparent()` → `createRootSpanFromTraceparent()`. The old names still work, delegate, and warn once per process with `E_USER_DEPRECATED`.
-- A span that is never ended is now sent instead of dropped: `OtlpSender::flushAll()` closes open spans before draining, and `Span::__destruct` closes one that dies mid-request.
+- A span that is never ended is now sent instead of dropped: the shutdown hook closes open spans before draining, and `Span::__destruct` closes one that dies mid-request. An explicit `OtlpSender::flushAll()` still only drains, so it never truncates a live span.
 - **Breaking:** `LoggerInterface` declares the new methods, so anything implementing it directly must add them.
 
 ### 0.6.1

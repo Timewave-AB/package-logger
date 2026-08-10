@@ -4,6 +4,7 @@ namespace Timewave\Logger\Tests;
 
 use PHPUnit\Framework\TestCase;
 use Timewave\Logger\Classes\OtlpSender;
+use Timewave\Logger\Classes\Span;
 
 /**
  * Per-test `php -S` server that mimics an OTLP collector: appends each
@@ -28,6 +29,7 @@ abstract class OtlpHttpServerTestCase extends TestCase
     {
         parent::setUp();
         OtlpSender::resetForTesting();
+        Span::resetForTesting();
         $this->serverPort = $this->findFreePort();
         $this->requestsFile = tempnam(sys_get_temp_dir(), 'otlpreqs_');
         file_put_contents($this->requestsFile, '');
@@ -82,6 +84,7 @@ abstract class OtlpHttpServerTestCase extends TestCase
             @unlink($this->routerScript);
         }
         OtlpSender::resetForTesting();
+        Span::resetForTesting();
         parent::tearDown();
     }
 

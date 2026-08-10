@@ -136,12 +136,15 @@ class Logger implements LoggerInterface
     }
 
     /**
-     * @deprecated Use createChildSpan(); the second argument is span attributes there too.
+     * @deprecated Use createChildSpan(), where span attributes are the THIRD argument — the second is log context.
      * @param array<string, scalar|\Stringable|null>|null $context span attributes (key => stringable value)
      */
     public function createSpanLogger(string $name, ?array $context = null): Logger
     {
-        self::warnDeprecated(__FUNCTION__, 'createChildSpan');
+        self::warnDeprecated(
+            __FUNCTION__,
+            'use createChildSpan($name, $context, $spanAttributes) and pass this array as $spanAttributes'
+        );
 
         return $this->createChildSpan($name, null, $context);
     }
@@ -155,7 +158,10 @@ class Logger implements LoggerInterface
         ?string $traceparent = null,
         ?array $context = null
     ): Logger {
-        self::warnDeprecated(__FUNCTION__, 'createRootSpanFromTraceparent');
+        self::warnDeprecated(
+            __FUNCTION__,
+            'use createRootSpanFromTraceparent($name, $traceparent, $context, $spanAttributes) and pass this array as $spanAttributes'
+        );
 
         return $this->createRootSpanFromTraceparent($name, $traceparent, null, $context);
     }
@@ -306,17 +312,14 @@ class Logger implements LoggerInterface
     }
 
     /** Once per method per process: these sit on request paths, where per-call would mean thousands of lines. */
-    private static function warnDeprecated(string $method, string $replacement): void
+    private static function warnDeprecated(string $method, string $advice): void
     {
         if (isset(self::$deprecationsWarned[$method])) {
             return;
         }
         self::$deprecationsWarned[$method] = true;
 
-        trigger_error(
-            "Timewave\\Logger: {$method}() is deprecated, use {$replacement}()",
-            E_USER_DEPRECATED
-        );
+        trigger_error("Timewave\\Logger: {$method}() is deprecated — {$advice}", E_USER_DEPRECATED);
     }
 
     public function warning(string $message, ?array $context = null, ?\Throwable $exception = null): void
@@ -363,7 +366,11 @@ class Logger implements LoggerInterface
     private function writeStdout(string $line): void
     {
         if ($this->stdoutHandle === null) {
-            $this->stdoutHandle = fopen('php://stdout', 'w');
+            $handle = fopen('php://stdout', 'w');
+            if ($handle === false) {
+                return;
+            }
+            $this->stdoutHandle = $handle;
         }
         fwrite($this->stdoutHandle, $line . "\n");
     }
