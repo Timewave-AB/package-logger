@@ -34,6 +34,10 @@ class OtlpSender
         $this->otlpHttpHost = $otlpHttpHost;
     }
 
+    /**
+     * Drains every queue. Spans still in flight are left running, so calling
+     * this mid-request does not truncate them.
+     */
     public static function flushAll(): void
     {
         foreach (array_keys(self::$sendersNeedingFlush) as $id) {
@@ -41,6 +45,18 @@ class OtlpSender
                 self::$sendersNeedingFlush[$id]->flush();
             }
         }
+    }
+
+    /**
+     * The registered shutdown entry point. Ends spans first: Span::end()
+     * enqueues, so anything closed after the drain would never be sent.
+     *
+     * @internal
+     */
+    public static function endSpansAndFlushAll(): void
+    {
+        Span::endAllOpen();
+        self::flushAll();
     }
 
     /** @internal Test-only state reset. */
@@ -100,7 +116,7 @@ class OtlpSender
             return;
         }
         self::$shutdownHookRegistered = true;
-        register_shutdown_function([self::class, 'flushAll']);
+        register_shutdown_function([self::class, 'endSpansAndFlushAll']);
     }
 
     private function send(string $path, array $payload): void

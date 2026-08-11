@@ -4,23 +4,30 @@ namespace Timewave\Logger\Classes;
 
 class Span
 {
+    /**
+     * Weak so a registered span can still be refcounted away mid-request.
+     *
+     * @var array<int, \WeakReference>
+     */
+    private static array $openSpans = [];
+
     public string $id;
-
-    public array $payload;
-
-    public string $traceId;
-
-    public string $name;
-
-    public string $serviceName;
 
     public ?array $context;
 
-    public ?string $parentId;
+    private bool $ended = false;
+
+    public string $name;
 
     private ?OtlpSender $otlpSender;
 
-    private bool $ended = false;
+    public ?string $parentId;
+
+    public array $payload;
+
+    public string $serviceName;
+
+    public string $traceId;
 
     public function __construct(
         string $name,
@@ -76,6 +83,25 @@ class Span
         if ($this->parentId) {
             $this->payload['resourceSpans'][0]['scopeSpans'][0]['spans'][0]['parentSpanId'] = $this->parentId;
         }
+
+        if ($this->otlpSender !== null) {
+            self::$openSpans[spl_object_id($this)] = \WeakReference::create($this);
+        }
+    }
+
+    /** Ends the span so it still reaches the collector; the duration then runs to this moment, not to the work's real end. */
+    public function __destruct()
+    {
+        if ($this->ended || $this->otlpSender === null) {
+            return;
+        }
+
+        $stderr = fopen('php://stderr', 'w');
+        if ($stderr !== false) {
+            fwrite($stderr, "Span '{$this->name}' was not ended explicitly — ending it at destruction\n");
+        }
+
+        $this->end();
     }
 
     /** Idempotent — second call is a no-op. */
@@ -85,6 +111,7 @@ class Span
             return;
         }
         $this->ended = true;
+        unset(self::$openSpans[spl_object_id($this)]);
 
         $this->payload['resourceSpans'][0]['scopeSpans'][0]['spans'][0]['endTimeUnixNano']
             = (string) (int) (microtime(true) * 1000000000);
@@ -94,16 +121,33 @@ class Span
         }
     }
 
-    /** An un-ended OTLP-wired span is invisible to the collector — warn so the loss is observable. */
-    public function __destruct()
+    /** Must run before the final drain: end() enqueues, and nothing drains after it. */
+    public static function endAllOpen(): void
     {
-        if ($this->ended || $this->otlpSender === null) {
-            return;
+        foreach (array_keys(self::$openSpans) as $id) {
+            if (!isset(self::$openSpans[$id])) {
+                continue;
+            }
+
+            $span = self::$openSpans[$id]->get();
+            if ($span === null) {
+                unset(self::$openSpans[$id]);
+                continue;
+            }
+
+            $span->end();
         }
-        $stderr = fopen('php://stderr', 'w');
-        if ($stderr !== false) {
-            fwrite($stderr, "Span '{$this->name}' destroyed without end() — span not POSTed to OTLP\n");
-        }
+    }
+
+    public function hasEnded(): bool
+    {
+        return $this->ended;
+    }
+
+    /** @internal Test-only state reset. */
+    public static function resetForTesting(): void
+    {
+        self::$openSpans = [];
     }
 
     private function createSpanId(): string

@@ -112,14 +112,14 @@ class SpanTest extends TestCase
         $this->assertSame($firstEnd, $secondEnd);
     }
 
-    public function testDestructorWarnsOnStderrWhenSpanWasNeverEnded(): void
+    public function testDestructorEndsAndWarnsWhenSpanWasNeverEnded(): void
     {
         $output = $this->runLoggerScript("
             \$sender = new \\Timewave\\Logger\\Classes\\OtlpSender('http://127.0.0.1:1');
             \$span = new \\Timewave\\Logger\\Classes\\Span('forgotten', 'svc', null, null, \$sender);
         ");
 
-        $this->assertStringContainsString("Span 'forgotten' destroyed without end()", $output);
+        $this->assertStringContainsString("Span 'forgotten' was not ended explicitly", $output);
     }
 
     public function testDestructorIsSilentForSpansWithoutOtlpWiring(): void
@@ -128,7 +128,7 @@ class SpanTest extends TestCase
             \$span = new \\Timewave\\Logger\\Classes\\Span('noop');
         ");
 
-        $this->assertStringNotContainsString('destroyed without end()', $output);
+        $this->assertStringNotContainsString('was not ended explicitly', $output);
     }
 
     public function testContextIsSerializedAsAttributes(): void

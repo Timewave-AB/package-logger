@@ -24,45 +24,76 @@ $log->info('Something happened', ['key' => 'value']);
 
 If you don't pass an `OtlpSender`, the logger only writes to stdout — OTLP is opt-in by construction. Wiring is constructor-only; the sender cannot be swapped on a live logger.
 
-### Usage with spans
+### Standing context
+
+A logger can carry context that rides along on every line it emits, so recurring fields don't have to be repeated per call. It reaches both stdout and the OTLP log record, exactly like per-call context.
+
+```php
+$log = new Logger('my-app-name', 'debug', 'text', "\t", null, null, ['env' => 'prod']);
+
+$log->info('Something happened');           // env=prod
+$log->info('And again', ['userId' => 42]);  // env=prod userId=42
+```
+
+`addContext()` mutates the logger in place. Keep it for values that hold for the whole process — under a long-running worker (Octane, RoadRunner, Swoole) a per-request value set this way outlives the request and misattributes later lines. Per-request values belong on a child span, which snapshots instead of mutating.
+
+On a key collision per-call context beats standing context, and an active span's `traceId`/`spanId` beat both. `getContext()` returns what a line from that logger carries, per-call context aside.
+
+### Child spans
+
+Nesting a logger and opening a span are the same act: `createChildSpan()` opens a child span and returns a logger for it, seeded with a copy of the parent's standing context. Set a parent's context before creating its children — context added afterwards reaches only the parent.
+
+Log context and span attributes are separate arguments: the second lands on every log line, the third only on the span in Tempo.
 
 ```php
 $log = new Logger('auth-4', 'debug', 'text', "\t", new OtlpSender('http://localhost:4318'));
 
-$requestSpanLog = $log->createSpanLogger('request', ['requestId' => 'Legodalf']);
+$request = $log->createChildSpan('request', ['requestId' => 'Legodalf'], ['http.method' => 'POST']);
+$request->verbose('Incoming request');
 
-$requestSpanLog->verbose('Incoming request', ['method' => 'POST', 'path' => '/auth/password']);
-
-$loginSpanLog = $requestSpanLog->createSpanLogger('login', ['username' => 'siv']);
-
-$loginSpanLog->info('User is trying to login');
-$userId = User::login('siv');
-$loginSpanLog->verbose('User is logged in');
+$login = $request->createChildSpan('login', ['username' => 'siv']);
+$login->info('User is trying to login');   // requestId=Legodalf username=siv traceId=… spanId=…
 
 // The underlying Span is reachable for callers that need the id or trace id
 // (e.g. to set on a response header):
-$traceId = $loginSpanLog->getSpan()->traceId;
+$traceId = $login->getSpan()->traceId;
 
-$loginSpanLog->endSpan();
-
-$requestSpanLog->debug('Request is over');
-
-$requestSpanLog->endSpan();
+$login->endSpan();
+$request->endSpan();
 ```
+
+`withChildSpan()` does the same but ends the span for you, including when the closure throws, and returns whatever the closure returns:
+
+```php
+$userId = $request->withChildSpan('login', ['username' => 'siv'], function (Logger $log) {
+    $log->info('User is trying to login');
+    return User::login('siv');
+});
+```
+
+Keep child spans to one per request, job, or comparable unit of work. Every ended span is its own OTLP POST and shares a queue holding 10 000 entries per sender, so opening one per row of a large import discards the telemetry that would have explained the import.
+
+With an `OtlpSender` wired, a span that is never ended is still sent: the shutdown hook closes any span left open before draining, and a span dropped mid-request is closed by its destructor. A span closed that way reports a duration running to the moment it was collected rather than to the end of the work, and writes one stderr line naming it — so prefer `withChildSpan()`, or call `endSpan()` yourself, wherever the lifetime is yours to control.
+
+An explicit `OtlpSender::flushAll()` only drains queues and leaves running spans alone, so it is safe to call mid-request.
 
 ### Linking to an incoming trace (`traceparent`)
 
 When a reverse-proxy (e.g. nginx `ngx_otel_module` with `otel_trace_context propagate`) injects a W3C `traceparent` header, root your request span on it so PHP spans join the proxy's trace instead of starting a detached one:
 
 ```php
-$requestSpanLog = $log->createSpanLoggerFromTraceparent(
+$request = $log->createRootSpanFromTraceparent(
     'request',
     $_SERVER['HTTP_TRACEPARENT'] ?? null,
     ['requestId' => 'Legodalf']
 );
 ```
 
-The header (`version-traceId-spanId-flags`) is parsed and validated (32-hex trace-id, 16-hex span-id, both non-zero). On a valid header the span adopts the incoming trace-id and uses the proxy's span-id as its parent. A missing or malformed header falls back to a fresh trace without throwing. Nested `createSpanLogger` calls inherit the parent's trace-id, so the whole request shares one trace.
+The header (`version-traceId-spanId-flags`) is parsed and validated (32-hex trace-id, 16-hex span-id, both non-zero). On a valid header the span adopts the incoming trace-id and uses the proxy's span-id as its parent. A missing or malformed header falls back to a fresh trace without throwing. Nested `createChildSpan` calls inherit the parent's trace-id, so the whole request shares one trace.
+
+### Deprecated methods
+
+`createSpanLogger()` and `createSpanLoggerFromTraceparent()` still work and delegate to `createChildSpan()` and `createRootSpanFromTraceparent()`. Their second/third `$context` argument keeps its old meaning of span attributes. Each writes one `E_USER_DEPRECATED` per process the first time it is called.
 
 ## Log levels
 
@@ -96,9 +127,9 @@ Practical consequences:
 
 - **No call ever blocks the request path on OTLP I/O.** Even if the collector is slow or hung, `http()` returns immediately. The actual cURL POST happens during the flush at shutdown.
 - **PHP-FPM**: call `OtlpSender::flushAll()` *before* `fastcgi_finish_request()` if you want OTLP delivered before the response goes out; otherwise the response ships first and the flush runs during worker idle time. `fastcgi_finish_request()` exists only in the FPM SAPI.
-- **Queue cap**: the queue is capped at `OtlpSender::MAX_QUEUE_SIZE` (10 000) items per sender. If the collector is dead and the queue fills, new entries are dropped and one `OTLP ERROR: queue full…` line is written to stdout until the queue drains.
+- **Queue cap**: the queue holds `OtlpSender::MAX_QUEUE_SIZE` (10 000) items per sender, counting log records and spans together. It fills whenever more than that is enqueued between drains, and the only automatic drain is at shutdown — a dead collector is one way to get there, a long single-process run that enqueues more than the cap is another. Past it, new entries are dropped and one `OTLP ERROR: queue full…` line is written to stdout until the queue drains.
 - **Hard process kill (SIGKILL, OOM-killer)**: the shutdown hook does not run, so in-flight items are lost. With a local collector this gap is small; if it matters to you, call `OtlpSender::flushAll()` at critical points.
-- **Forgotten `end()`**: a `Span` that is destroyed without `end()` is invisible to the collector. The destructor writes one stderr warning per dropped span (`Span 'name' destroyed without end() — span not POSTed to OTLP`) so the omission is observable.
+- **Forgotten `end()`**: the span is still sent, closed either by its destructor or by the shutdown hook, and one stderr line (`Span 'name' was not ended explicitly — ending it at destruction`) names it. A span opened *after* the shutdown hook has already drained — from another `register_shutdown_function`, say — is queued too late and lost.
 
 ### OTLP stopwatch (per-call latency)
 
@@ -162,6 +193,14 @@ A GitHub webhook notifies Packagist on every push, so the new version appears wi
 The webhook is already configured; this is only documented in case it needs re-creating (repo → Settings → Webhooks): payload URL `https://packagist.org/api/github?username=timewave`, content type `application/json`, secret = the `timewave` Packagist account's API token, subscribed to the `push` event.
 
 ## Changelog
+
+### 0.7.0
+
+- Standing context on `Logger`: a last constructor argument plus `addContext()`, `removeContext()` and `getContext()`, merged into every stdout line and OTLP log record.
+- Nesting a logger and opening a span are now one act: `createChildSpan()` and `withChildSpan()` open a child span and carry a copy of the parent's standing context. Log context and span attributes are separate arguments.
+- `createSpanLogger()` → `createChildSpan()` and `createSpanLoggerFromTraceparent()` → `createRootSpanFromTraceparent()`. The old names still work, delegate, and warn once per process with `E_USER_DEPRECATED`.
+- A span that is never ended is now sent instead of dropped: the shutdown hook closes open spans before draining, and `Span::__destruct` closes one that dies mid-request. An explicit `OtlpSender::flushAll()` still only drains, so it never truncates a live span.
+- **Breaking:** `LoggerInterface` declares the new methods, so anything implementing it directly must add them.
 
 ### 0.6.1
 - Fixed non-stringeable value error.
