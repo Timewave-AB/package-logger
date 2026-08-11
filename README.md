@@ -71,6 +71,8 @@ $userId = $request->withChildSpan('login', ['username' => 'siv'], function (Logg
 });
 ```
 
+Keep child spans to one per request, job, or comparable unit of work. Every ended span is its own OTLP POST and shares a queue holding 10 000 entries per process, so opening one per row of a large import discards the telemetry that would have explained the import.
+
 A span that is never ended is still sent: the shutdown hook closes any span left open before draining, and a span dropped mid-request is closed by its destructor. A span closed that way reports a duration running to the moment it was collected rather than to the end of the work, and writes one stderr line naming it — so prefer `withChildSpan()`, or call `endSpan()` yourself, wherever the lifetime is yours to control.
 
 An explicit `OtlpSender::flushAll()` only drains queues and leaves running spans alone, so it is safe to call mid-request.
@@ -125,7 +127,7 @@ Practical consequences:
 
 - **No call ever blocks the request path on OTLP I/O.** Even if the collector is slow or hung, `http()` returns immediately. The actual cURL POST happens during the flush at shutdown.
 - **PHP-FPM**: call `OtlpSender::flushAll()` *before* `fastcgi_finish_request()` if you want OTLP delivered before the response goes out; otherwise the response ships first and the flush runs during worker idle time. `fastcgi_finish_request()` exists only in the FPM SAPI.
-- **Queue cap**: the queue is capped at `OtlpSender::MAX_QUEUE_SIZE` (10 000) items per sender. If the collector is dead and the queue fills, new entries are dropped and one `OTLP ERROR: queue full…` line is written to stdout until the queue drains.
+- **Queue cap**: the queue holds `OtlpSender::MAX_QUEUE_SIZE` (10 000) items per sender, counting log records and spans together. It fills whenever more than that is enqueued between drains, and the only automatic drain is at shutdown — a dead collector is one way to get there, a long single-process run that enqueues more than the cap is another. Past it, new entries are dropped and one `OTLP ERROR: queue full…` line is written to stdout until the queue drains.
 - **Hard process kill (SIGKILL, OOM-killer)**: the shutdown hook does not run, so in-flight items are lost. With a local collector this gap is small; if it matters to you, call `OtlpSender::flushAll()` at critical points.
 - **Forgotten `end()`**: the span is still sent, closed either by its destructor or by the shutdown hook, and one stderr line (`Span 'name' was not ended explicitly — ending it at destruction`) names it. A span opened *after* the shutdown hook has already drained — from another `register_shutdown_function`, say — is queued too late and lost.
 
