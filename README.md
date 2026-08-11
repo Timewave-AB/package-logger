@@ -71,7 +71,7 @@ $userId = $request->withChildSpan('login', ['username' => 'siv'], function (Logg
 });
 ```
 
-Keep child spans to one per request, job, or comparable unit of work. Every ended span is its own OTLP POST and shares a queue holding 10 000 entries per process, so opening one per row of a large import discards the telemetry that would have explained the import.
+Keep child spans to one per request, job, or comparable unit of work. Every ended span is its own OTLP POST and shares a queue holding 10 000 entries per sender, so opening one per row of a large import discards the telemetry that would have explained the import.
 
 A span that is never ended is still sent: the shutdown hook closes any span left open before draining, and a span dropped mid-request is closed by its destructor. A span closed that way reports a duration running to the moment it was collected rather than to the end of the work, and writes one stderr line naming it — so prefer `withChildSpan()`, or call `endSpan()` yourself, wherever the lifetime is yours to control.
 
