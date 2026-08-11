@@ -79,7 +79,10 @@ class LoggerOtlpTest extends OtlpHttpServerTestCase
 
         $requests = $this->waitForRequests(1);
         $this->assertSame('/v1/traces', $requests[0]['path']);
-        $this->assertTrue($held->getSpan()->hasEnded());
+
+        $span = $held->getSpan();
+        $this->assertNotNull($span);
+        $this->assertTrue($span->hasEnded());
     }
 
     public function testExplicitFlushDoesNotTruncateASpanStillInFlight(): void
@@ -94,7 +97,9 @@ class LoggerOtlpTest extends OtlpHttpServerTestCase
 
         OtlpSender::flushAll();
 
-        $this->assertFalse($request->getSpan()->hasEnded());
+        $span = $request->getSpan();
+        $this->assertNotNull($span);
+        $this->assertFalse($span->hasEnded());
 
         $request->endSpan();
         OtlpSender::flushAll();

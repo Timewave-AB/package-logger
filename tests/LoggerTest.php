@@ -354,8 +354,12 @@ class LoggerTest extends LoggerSubprocessTestCase
         });
 
         $this->assertSame('returned', $result);
+        $this->assertNotNull($inner);
+
+        $span = $inner->getSpan();
+        $this->assertNotNull($span);
         $this->assertSame(['env' => 'prod', 'tenant' => 'acme'], $this->standingContext($inner));
-        $this->assertTrue($inner->getSpan()->hasEnded());
+        $this->assertTrue($span->hasEnded());
     }
 
     public function testWithChildSpanEndsTheSpanWhenTheClosureThrows(): void
@@ -374,7 +378,10 @@ class LoggerTest extends LoggerSubprocessTestCase
         }
 
         $this->assertNotNull($inner);
-        $this->assertTrue($inner->getSpan()->hasEnded());
+
+        $span = $inner->getSpan();
+        $this->assertNotNull($span);
+        $this->assertTrue($span->hasEnded());
     }
 
     public function testLoggerInterfaceDeclaresContextAndSpanMethods(): void
