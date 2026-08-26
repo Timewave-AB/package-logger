@@ -150,6 +150,12 @@ class Span
         self::$openSpans = [];
     }
 
+    /** W3C `traceparent` naming this span as the parent for the callee's spans. The flags byte is always `01`; everything we emit is sampled. */
+    public function toTraceparent(): string
+    {
+        return "00-{$this->traceId}-{$this->id}-01";
+    }
+
     private function createSpanId(): string
     {
         return bin2hex(random_bytes(8));

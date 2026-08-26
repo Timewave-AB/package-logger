@@ -91,6 +91,20 @@ $request = $log->createRootSpanFromTraceparent(
 
 The header (`version-traceId-spanId-flags`) is parsed and validated (32-hex trace-id, 16-hex span-id, both non-zero). On a valid header the span adopts the incoming trace-id and uses the proxy's span-id as its parent. A missing or malformed header falls back to a fresh trace without throwing. Nested `createChildSpan` calls inherit the parent's trace-id, so the whole request shares one trace.
 
+### Propagating the trace outwards (`traceparent`)
+
+Send the current span on as a `traceparent` header so the service you call joins the same trace, with your span as the parent of its spans:
+
+```php
+$span = $request->getSpan();
+
+$headers = $span !== null
+    ? ['traceparent' => $span->toTraceparent()]
+    : [];
+```
+
+`Span::toTraceparent()` returns `00-{traceId}-{spanId}-01`. Use it instead of formatting the header at each call site, so honouring the incoming sampling flag later is one change here rather than one per consumer.
+
 ### Deprecated methods
 
 `createSpanLogger()` and `createSpanLoggerFromTraceparent()` still work and delegate to `createChildSpan()` and `createRootSpanFromTraceparent()`. Their second/third `$context` argument keeps its old meaning of span attributes. Each writes one `E_USER_DEPRECATED` per process the first time it is called.
@@ -193,6 +207,10 @@ A GitHub webhook notifies Packagist on every push, so the new version appears wi
 The webhook is already configured; this is only documented in case it needs re-creating (repo → Settings → Webhooks): payload URL `https://packagist.org/api/github?username=timewave`, content type `application/json`, secret = the `timewave` Packagist account's API token, subscribed to the `push` event.
 
 ## Changelog
+
+### 0.7.1
+
+- `Span::toTraceparent()` builds the outgoing W3C `traceparent` header (`00-{traceId}-{spanId}-01`) from the current span, so consumers propagating trace-context no longer format it themselves.
 
 ### 0.7.0
 

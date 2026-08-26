@@ -266,6 +266,47 @@ class LoggerTest extends LoggerSubprocessTestCase
         }
     }
 
+    public function testToTraceparentMatchesW3cVersion00Format(): void
+    {
+        $log = new Logger('svc');
+        $span = $log->createChildSpan('outgoing')->getSpan();
+
+        $this->assertNotNull($span);
+        $this->assertMatchesRegularExpression('/^00-[0-9a-f]{32}-[0-9a-f]{16}-01$/', $span->toTraceparent());
+    }
+
+    public function testToTraceparentCarriesTheSpansOwnIds(): void
+    {
+        $log = new Logger('svc');
+        $span = $log->createChildSpan('outgoing')->getSpan();
+        $this->assertNotNull($span);
+
+        [$version, $traceId, $spanId, $flags] = explode('-', $span->toTraceparent());
+
+        $this->assertSame('00', $version);
+        $this->assertSame($span->traceId, $traceId);
+        $this->assertSame($span->id, $spanId);
+        $this->assertSame('01', $flags);
+    }
+
+    public function testToTraceparentRoundTripsIntoCreateRootSpanFromTraceparent(): void
+    {
+        // A header the parser rejects makes it fall back to a fresh trace with no
+        // parent, so both assertions below fail unless emitter and parser agree.
+        $callerLog = new Logger('caller');
+        $callerSpan = $callerLog->createChildSpan('outgoing')->getSpan();
+        $this->assertNotNull($callerSpan);
+
+        $receiverLog = new Logger('receiver');
+        $receiverSpan = $receiverLog
+            ->createRootSpanFromTraceparent('request', $callerSpan->toTraceparent())
+            ->getSpan();
+
+        $this->assertNotNull($receiverSpan);
+        $this->assertSame($callerSpan->traceId, $receiverSpan->traceId);
+        $this->assertSame($callerSpan->id, $receiverSpan->parentId);
+    }
+
     public function testCreateChildSpanInheritsAndMergesParentContext(): void
     {
         $log = new Logger('svc', 'debug', 'text', "\t", null, null, ['env' => 'prod', 'tenant' => 'acme']);
