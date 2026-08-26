@@ -150,11 +150,7 @@ class Span
         self::$openSpans = [];
     }
 
-    /**
-     * W3C `traceparent` for an outgoing request, so the callee's spans join this
-     * trace with this span as their parent. The flags byte is always `01` —
-     * everything we emit is sampled.
-     */
+    /** W3C `traceparent` naming this span as the parent for the callee's spans. The flags byte is always `01`; everything we emit is sampled. */
     public function toTraceparent(): string
     {
         return "00-{$this->traceId}-{$this->id}-01";
