@@ -96,7 +96,7 @@ The header (`version-traceId-spanId-flags`) is parsed and validated (32-hex trac
 Send the current span on as a `traceparent` header so the service you call joins the same trace, with your span as the parent of its spans:
 
 ```php
-$span = $log->getSpan();
+$span = $request->getSpan();
 
 $headers = $span !== null
     ? ['traceparent' => $span->toTraceparent()]
